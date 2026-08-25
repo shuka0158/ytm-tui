@@ -1,0 +1,20 @@
+# Credentials — NEVER commit (holds live Google session cookies / OAuth tokens)
+config/
+
+# Local caches
+cache/
+
+# Virtualenv
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# mpv IPC sockets / misc
+*.sock
+*.log

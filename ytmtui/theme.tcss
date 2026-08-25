@@ -1,0 +1,114 @@
+Screen {
+    background: $surface;
+    layout: vertical;
+}
+
+#main {
+    height: 1fr;
+}
+
+.pane-title {
+    background: $panel;
+    color: $accent;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
+}
+
+#sidebar {
+    width: 32;
+    border-right: solid $primary-darken-2;
+}
+
+#playlists {
+    height: 1fr;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#playlists > ListItem {
+    padding: 0 1;
+}
+
+#playlists > ListItem.--highlight {
+    background: $accent-darken-2;
+}
+
+#content {
+    width: 1fr;
+}
+
+#tracks {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#tracks > .datatable--cursor {
+    background: $accent-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+#now {
+    height: 9;
+    background: $panel;
+    border-top: solid $primary-darken-2;
+    padding: 0 1;
+}
+
+#art {
+    width: 16;
+    height: 8;
+    margin-right: 2;
+}
+
+#np {
+    width: 1fr;
+    height: 8;
+    padding-top: 1;
+}
+
+#np-title {
+    height: 1;
+    color: $text;
+}
+
+#np-artist {
+    height: 1;
+}
+
+#np-bar {
+    height: 1;
+    margin-top: 1;
+}
+
+#np-status {
+    height: 1;
+    margin-top: 1;
+}
+
+SearchScreen {
+    align: center middle;
+    background: $surface 60%;
+}
+
+#search-box {
+    width: 68;
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+}
+
+HelpScreen {
+    align: center middle;
+    background: $surface 70%;
+}
+
+#help-box {
+    width: 66;
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+}
