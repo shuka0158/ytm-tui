@@ -257,6 +257,11 @@ class YtmTui(App[None]):
     def _load_tracks(self, playlist: Playlist) -> None:
         if self.library is None:
             return
+        if playlist.loaded:  # already fetched this session
+            self.call_from_thread(
+                self._show_tracks, playlist.tracks, playlist.title
+            )
+            return
         worker = get_current_worker()
         try:
             tracks = self.library.tracks(playlist)
@@ -267,6 +272,8 @@ class YtmTui(App[None]):
             return
         if worker.is_cancelled:
             return
+        playlist.tracks = tracks
+        playlist.loaded = True
         self.call_from_thread(self._show_tracks, tracks, playlist.title)
 
     def _show_tracks(self, tracks: list[Track], title: str) -> None:

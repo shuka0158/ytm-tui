@@ -32,6 +32,10 @@ from .models import Playlist, Track
 # YouTube's personalised mixes all share this playlist-id prefix.
 _MIX_ID_PREFIX = "RDTMAK5uy_"
 
+# YouTube answers with ~200 mix tracks however few we ask for, and paging
+# past that buys nothing anyone will scroll to.
+_MIX_TRACK_LIMIT = 100
+
 # How alike two titles must be before we treat them as the same song.
 _MIN_TITLE_SIMILARITY = 0.55
 
@@ -159,7 +163,10 @@ class Library:
         elif playlist.kind == "library":
             raw = self.yt.get_library_songs(limit=5000, order="recently_added")
         else:
-            raw = (self.yt.get_playlist(playlist.id, limit=5000) or {}).get("tracks", [])
+            # A mix has no end, so asking for everything just pages forever —
+            # 37s and 1400 tracks where the first response already holds 200.
+            limit = _MIX_TRACK_LIMIT if playlist.kind == "mix" else 5000
+            raw = (self.yt.get_playlist(playlist.id, limit=limit) or {}).get("tracks", [])
 
         tracks = []
         for item in raw or []:
