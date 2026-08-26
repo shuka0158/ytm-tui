@@ -14,6 +14,7 @@ your terminal, with real album art via the kitty graphics protocol.
 ## Features
 
 - Loads **your** YouTube Music playlists, Liked Music and Library Songs
+- YouTube's own mixes — Supermix, My Mix, Discover, Replay — in the sidebar
 - Full-text search across YouTube Music, songs and videos alike
 - Blocked track? It finds another upload of the same song and plays that
 - Start a radio from any track
@@ -144,6 +145,17 @@ steps above.
 | `q` | quit |
 
 Volume, shuffle and repeat are remembered in `config/settings.json`.
+
+### Mixes
+
+The sidebar lists YouTube's personalised mixes for your account — Supermix,
+My Mix 1-5, Discover Mix, Replay Mix, New Release Mix — above your own
+playlists, and they play like any other playlist. They are refreshed from
+YouTube Music's home feed on each start, so the set changes as your listening
+does.
+
+They are picked out by playlist id rather than by the heading YouTube gives
+them, so this keeps working whatever language your account is set to.
 
 ### Tracks that need a sign-in
 

@@ -29,6 +29,9 @@ from ytmusicapi import OAuthCredentials, YTMusic
 from . import config
 from .models import Playlist, Track
 
+# YouTube's personalised mixes all share this playlist-id prefix.
+_MIX_ID_PREFIX = "RDTMAK5uy_"
+
 # How alike two titles must be before we treat them as the same song.
 _MIN_TITLE_SIMILARITY = 0.55
 
@@ -92,11 +95,43 @@ class Library:
         self.yt = connect()
 
     # -- playlists ---------------------------------------------------------
+    def mixes(self) -> list[Playlist]:
+        """YouTube's own mixes for this account — Supermix, My Mix N, Discover…
+
+        Picked out by playlist id rather than by the home section's heading,
+        which comes back in the account's own language.
+        """
+        try:
+            home = self.yt.get_home(limit=10)
+        except Exception:
+            return []
+
+        out: list[Playlist] = []
+        seen: set[str] = set()
+        for section in home or []:
+            for item in section.get("contents") or []:
+                pid = item.get("playlistId") or ""
+                if not pid.startswith(_MIX_ID_PREFIX) or pid in seen:
+                    continue
+                seen.add(pid)
+                thumbs = item.get("thumbnails") or []
+                out.append(
+                    Playlist(
+                        id=pid,
+                        title=item.get("title") or "Mix",
+                        subtitle=item.get("description") or "mix",
+                        thumb=thumbs[-1].get("url", "") if thumbs else "",
+                        kind="mix",
+                    )
+                )
+        return out
+
     def playlists(self) -> list[Playlist]:
         out: list[Playlist] = [
             Playlist(id="LM", title="Liked Music", subtitle="your likes", kind="liked"),
             Playlist(id="__library__", title="Library Songs", subtitle="saved songs", kind="library"),
         ]
+        out.extend(self.mixes())
         try:
             raw = self.yt.get_library_playlists(limit=200)
         except Exception:

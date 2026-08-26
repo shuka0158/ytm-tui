@@ -93,6 +93,6 @@ class Playlist:
     title: str
     subtitle: str = ""
     thumb: str = ""
-    kind: str = "playlist"          # playlist | liked | library | search
+    kind: str = "playlist"          # playlist | liked | library | mix | search
     tracks: list[Track] = field(default_factory=list)
     loaded: bool = False
