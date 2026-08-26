@@ -14,7 +14,9 @@ your terminal, with real album art via the kitty graphics protocol.
 ## Features
 
 - Loads **your** YouTube Music playlists, Liked Music and Library Songs
-- Full-text search across YouTube Music
+- YouTube's own mixes — Supermix, My Mix, Discover, Replay — in the sidebar
+- Full-text search across YouTube Music, songs and videos alike
+- Blocked track? It finds another upload of the same song and plays that
 - Start a radio from any track
 - Gapless streaming — nothing is downloaded to disk, audio is piped into `mpv`
 - Real album art in the terminal (kitty graphics protocol; unicode-block fallback
@@ -34,6 +36,10 @@ your terminal, with real album art via the kitty graphics protocol.
 
 - Python 3.11+
 - `mpv` and `ffmpeg` on your `PATH`
+- A JavaScript runtime on your `PATH` — `deno`, `node`, `quickjs` or `bun`.
+  YouTube signs its stream URLs with player JavaScript, and without an engine to
+  run it yt-dlp silently drops formats and tracks fail to play.
+  (`sudo apt install nodejs`, or see [deno.land](https://deno.land).)
 - A terminal for best results **kitty** (album art). Works in others with
   unicode-block art.
 
@@ -139,6 +145,101 @@ steps above.
 | `q` | quit |
 
 Volume, shuffle and repeat are remembered in `config/settings.json`.
+
+### Mixes
+
+The sidebar lists YouTube's personalised mixes for your account — Supermix,
+My Mix 1-5, Discover Mix, Replay Mix, New Release Mix — above your own
+playlists, and they play like any other playlist. They are refreshed from
+YouTube Music's home feed on each start, so the set changes as your listening
+does.
+
+They are picked out by playlist id rather than by the heading YouTube gives
+them, so this keeps working whatever language your account is set to.
+
+### Tracks that need a sign-in
+
+Most tracks play anonymously, and that is deliberate: YouTube refuses to serve
+streams to a cookie-authenticated request, answering with *"The page needs to be
+reloaded"* and no formats at all. Sending your session on every track would break
+the tracks that currently work.
+
+So the player resolves anonymously first, and only retries with a signed-in
+session when YouTube specifically answers *"Sign in to confirm your age"*.
+
+That session is free: `ytm setup` already captures a signed-in
+music.youtube.com request, so the cookies get exported to `config/cookies.txt`
+automatically. There is nothing extra to do.
+
+To check what would be used, or to override it:
+
+```sh
+ytm cookies                      # what the retry would send
+ytm cookies login                # open the YouTube sign-in page
+ytm cookies detect               # browser profiles signed in to YouTube
+ytm cookies "chrome:Profile 2"   # use a browser profile instead
+ytm cookies file ~/cookies.txt   # use a Netscape cookies.txt instead
+ytm cookies auto                 # back to the session from `ytm setup`
+```
+
+Reading a Chromium-based browser's cookie store needs `secretstorage` (already
+in `requirements.txt`) and a running keyring; Firefox needs neither.
+
+**When a track is blocked anyway.** A few uploads are refused to the player even
+with a signed-in, age-verified account. YouTube wants the attestation a real
+browser produces, and no cookie, browser profile or client override substitutes
+for it — such an upload usually still plays fine on youtube.com.
+
+Rather than give up, the player looks for **another upload of the same song** and
+plays that instead. Covers, re-uploads and mirrors are rarely restricted the way
+the original is. You are told when it happens, never silently swapped:
+
+```
+"<title>" is blocked - playing another upload: "<other title>"
+```
+
+Candidates have to earn it. A match needs a similar title, compared after
+stripping noise words like *official*, *remaster* and *HD*, and a duration within
+25% of the original. That length check is what keeps a 40-second snippet sharing
+a title out of your queue — playing the wrong thing is worse than playing
+nothing. Up to three candidates are resolved at once and the best-matching one
+that actually works wins.
+
+The first blocked track costs a few seconds while it searches. After that both
+the verdict and the substitution are remembered, so playing it again is instant,
+and the next track in the queue is checked ahead of time while the current one
+plays.
+
+If nothing suitable exists, it says so and moves on:
+
+```
+age-restricted: YouTube refused this to the player even signed in.
+It normally still plays on youtube.com in a browser.
+```
+
+**PO tokens (optional).** YouTube increasingly asks for a proof-of-origin token
+on authenticated requests. yt-dlp can produce one via a provider plugin, which
+needs Deno (or Node 22+):
+
+```sh
+.venv/bin/pip install bgutil-ytdlp-pot-provider
+git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider ~/bgutil-ytdlp-pot-provider
+cd ~/bgutil-ytdlp-pot-provider/server && npm install && npx tsc
+```
+
+This is not required — the player works without it — and in testing it did not
+unlock the age-restricted case above. It is here because it silences the
+"GVS PO Token which was not provided" warnings and is likely to matter more over
+time.
+
+### When something will not play
+
+```sh
+ytm doctor
+```
+
+Checks `mpv`, the JavaScript runtime, your stored account and the session used
+for gated tracks, and names whatever is missing.
 
 ## Maintenance
 
