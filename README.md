@@ -14,7 +14,8 @@ your terminal, with real album art via the kitty graphics protocol.
 ## Features
 
 - Loads **your** YouTube Music playlists, Liked Music and Library Songs
-- Full-text search across YouTube Music
+- Full-text search across YouTube Music, songs and videos alike
+- Blocked track? It finds another upload of the same song and plays that
 - Start a radio from any track
 - Gapless streaming — nothing is downloaded to disk, audio is piped into `mpv`
 - Real album art in the terminal (kitty graphics protocol; unicode-block fallback
@@ -172,11 +173,32 @@ ytm cookies auto                 # back to the session from `ytm setup`
 Reading a Chromium-based browser's cookie store needs `secretstorage` (already
 in `requirements.txt`) and a running keyring; Firefox needs neither.
 
-**What cookies cannot fix.** A few tracks are refused to the player even with a
-signed-in, age-verified account. YouTube wants the attestation a real browser
-produces, and no cookie, browser profile or client override substitutes for it.
-Such a track usually still plays normally on youtube.com. The player says so
-rather than pretending another setting would help:
+**When a track is blocked anyway.** A few uploads are refused to the player even
+with a signed-in, age-verified account. YouTube wants the attestation a real
+browser produces, and no cookie, browser profile or client override substitutes
+for it — such an upload usually still plays fine on youtube.com.
+
+Rather than give up, the player looks for **another upload of the same song** and
+plays that instead. Covers, re-uploads and mirrors are rarely restricted the way
+the original is. You are told when it happens, never silently swapped:
+
+```
+"<title>" is blocked - playing another upload: "<other title>"
+```
+
+Candidates have to earn it. A match needs a similar title, compared after
+stripping noise words like *official*, *remaster* and *HD*, and a duration within
+25% of the original. That length check is what keeps a 40-second snippet sharing
+a title out of your queue — playing the wrong thing is worse than playing
+nothing. Up to three candidates are resolved at once and the best-matching one
+that actually works wins.
+
+The first blocked track costs a few seconds while it searches. After that both
+the verdict and the substitution are remembered, so playing it again is instant,
+and the next track in the queue is checked ahead of time while the current one
+plays.
+
+If nothing suitable exists, it says so and moves on:
 
 ```
 age-restricted: YouTube refused this to the player even signed in.
