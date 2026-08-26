@@ -24,11 +24,12 @@ import sys
 from ytmusicapi import setup as setup_browser_headers
 from ytmusicapi import setup_oauth
 
-from . import config
+from . import config, cookies
 
 BROWSER_STEPS = """
-  1. Open  https://music.youtube.com  and sign in to the account whose playlists
-     you want.  TIP: use an Incognito/Private window — see the note at the end.
+  1. Sign in to the account whose playlists you want, in the browser window that
+     just opened (if none did, open  https://music.youtube.com  yourself).
+     TIP: use an Incognito/Private window — see the note at the end.
   2. Press F12 to open DevTools, go to the  Network  tab.
   3. Type  browse  into the filter box, then click anything in the page so a
      request appears. Click one POST request to music.youtube.com.
@@ -64,6 +65,10 @@ def _read_block(prompt: str) -> str:
 def setup_browser() -> int:
     config.ensure_dirs()
     print("\n=== Browser-header sign-in ===")
+    if cookies.open_login_page():
+        print("\nOpened the YouTube sign-in page in your browser.")
+    else:
+        print(f"\nCould not open a browser. Go to {cookies.LOGIN_URL} yourself.")
     print(BROWSER_STEPS)
     raw = _read_block("Paste request headers now:\n")
     if not raw.strip():
@@ -78,6 +83,17 @@ def setup_browser() -> int:
     if config.OAUTH_AUTH.exists():
         config.OAUTH_AUTH.unlink()
     print(f"\nSaved credentials to {config.BROWSER_AUTH}")
+
+    # Same session, in the format yt-dlp reads, so sign-in gated tracks play
+    # without anyone exporting cookies a second time.
+    if cookies.sync_from_auth(force=True):
+        print(f"Wrote yt-dlp cookies to {config.COOKIES_FILE}")
+    else:
+        print(
+            "Note: those headers carry no login cookie, so age-restricted tracks\n"
+            "      will not play. Re-run `ytm setup` from a signed-in session, or\n"
+            "      point the player at a browser with `ytm cookies <browser>`."
+        )
     return 0
 
 

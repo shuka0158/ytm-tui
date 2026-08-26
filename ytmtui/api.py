@@ -20,11 +20,42 @@ turns the raw dicts into Track/Playlist objects."""
 from __future__ import annotations
 
 import json
+import re
+from difflib import SequenceMatcher
+from itertools import zip_longest
 
 from ytmusicapi import OAuthCredentials, YTMusic
 
 from . import config
 from .models import Playlist, Track
+
+# How alike two titles must be before we treat them as the same song.
+_MIN_TITLE_SIMILARITY = 0.55
+
+# Snippets and clips share a title with the real thing; length gives them away.
+_DURATION_TOLERANCE = 0.25
+
+_NOISE = re.compile(
+    r"\b(official|video|audio|lyrics?|hd|hq|4k|remaster(ed)?|full|clip|snippet)\b",
+    re.IGNORECASE,
+)
+_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _normalise(title: str) -> str:
+    text = _NOISE.sub(" ", title.casefold())
+    return " ".join(_PUNCT.sub(" ", text).split())
+
+
+def _title_similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, _normalise(a), _normalise(b)).ratio()
+
+
+def _duration_fits(want: int, got: int) -> bool:
+    """Reject obvious snippets. Unknown durations get the benefit of the doubt."""
+    if not want or not got:
+        return True
+    return abs(got - want) <= want * _DURATION_TOLERANCE
 
 
 class AuthMissing(RuntimeError):
@@ -104,13 +135,66 @@ class Library:
 
     # -- search ------------------------------------------------------------
     def search(self, query: str, limit: int = 40) -> list[Track]:
-        results = self.yt.search(query, filter="songs", limit=limit)
-        tracks = []
-        for item in results or []:
-            track = Track.from_item(item)
-            if track is not None:
+        """Songs and videos, interleaved.
+
+        Plenty of material — covers, remixes, anything a label never uploaded —
+        exists only as a video. Searching songs alone hides it, and simply
+        appending videos lets songs fill the limit first, so alternate between
+        the two lists and let each keep half the room.
+        """
+        groups: list[list[Track]] = []
+        for filt in ("songs", "videos"):
+            try:
+                results = self.yt.search(query, filter=filt, limit=limit)
+            except Exception:
+                continue  # one filter failing should not lose the other's hits
+            group = []
+            for item in results or []:
+                track = Track.from_item(item)
+                if track is not None:
+                    group.append(track)
+            groups.append(group)
+
+        tracks: list[Track] = []
+        seen: set[str] = set()
+        for row in zip_longest(*groups):
+            for track in row:
+                if track is None or track.video_id in seen:
+                    continue
+                seen.add(track.video_id)
                 tracks.append(track)
-        return tracks
+        return tracks[:limit]
+
+    # -- alternates --------------------------------------------------------
+    def alternates(self, track: Track, limit: int = 5) -> list[Track]:
+        """Other uploads of the same song, best match first.
+
+        Used when YouTube refuses one upload: a cover or re-upload of the same
+        thing will often play when the original will not. Matching is
+        deliberately strict, because playing the wrong song is worse than
+        playing nothing.
+        """
+        query = f"{track.title} {track.artist}".strip()
+        if not query:
+            return []
+        try:
+            results = self.search(query, limit=limit * 4)
+        except Exception:
+            return []
+
+        scored: list[tuple[float, Track]] = []
+        for other in results:
+            if other.video_id == track.video_id:
+                continue
+            if not _duration_fits(track.duration, other.duration):
+                continue
+            score = _title_similarity(track.title, other.title)
+            if score < _MIN_TITLE_SIMILARITY:
+                continue
+            scored.append((score, other))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [other for _, other in scored[:limit]]
 
     # -- radio / autoplay --------------------------------------------------
     def radio(self, video_id: str, limit: int = 40) -> list[Track]:

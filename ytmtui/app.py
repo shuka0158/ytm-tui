@@ -18,6 +18,8 @@
 """The Textual UI."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -33,15 +35,15 @@ from textual.widgets import (
     ListView,
     Static,
 )
-from textual.worker import get_current_worker
+from textual.worker import Worker, get_current_worker
 from textual_image.widget import Image
 
-from . import art, config
+from . import art, config, cookies
 from .api import AuthMissing, Library
 from .models import Playlist, Track, fmt_duration
 from .player import MpvPlayer
 from .queue import PlayQueue
-from .resolver import Resolver
+from .resolver import JS_RUNTIME_HINT, Resolver, TrackBlocked, missing_js_runtime
 
 BAR_WIDTH = 44
 
@@ -128,7 +130,12 @@ class YtmTui(App[None]):
         self.settings = config.load_settings()
         self.library: Library | None = None
         self.player = MpvPlayer(on_eof=self._on_eof)
-        self.resolver = Resolver(self.settings.get("format"))
+        cookie_browser, cookie_file = cookies.resolve_source(self.settings)
+        self.resolver = Resolver(
+            self.settings.get("format"),
+            cookies_from_browser=cookie_browser,
+            cookies_file=cookie_file,
+        )
         self.queue = PlayQueue()
         self.queue.shuffle = bool(self.settings.get("shuffle", False))
         self.queue.repeat = self.settings.get("repeat", "off")
@@ -137,12 +144,20 @@ class YtmTui(App[None]):
         self.view_tracks: list[Track] = []
         self.view_title: str = ""
         self.playing_row: int | None = None
+        # Skipping a failed track wraps around at the end of the queue, so a
+        # queue where everything fails would skip forever. Bound it.
+        self._failures_in_a_row = 0
+        # Blocked track -> the upload we substituted, so a repeat play skips
+        # the search and the failed resolves entirely.
+        self._alternates: dict[str, Track] = {}
         self._rendered_width: int = 0
         self._col_keys: dict[str, object] = {}
 
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        # The default "⭘" icon is the command-palette button; it renders as a
+        # bare circle in most terminal fonts, so drop it.
+        yield Header(show_clock=True, icon=" ")
         with Horizontal(id="main"):
             with Vertical(id="sidebar"):
                 yield Static("Playlists", classes="pane-title")
@@ -157,7 +172,9 @@ class YtmTui(App[None]):
                 yield Static("", id="np-artist")
                 yield Static("", id="np-bar")
                 yield Static("", id="np-status")
-        yield Footer()
+        # The palette's own footer button clashes with the key hints; ctrl+p
+        # still opens it.
+        yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
         table = self.query_one("#tracks", DataTable)
@@ -176,6 +193,11 @@ class YtmTui(App[None]):
             self.player.start(volume=self.volume)
         except Exception as exc:
             self.notify(f"mpv failed to start: {exc}", severity="error", timeout=12)
+
+        if self.resolver.cookie_warning:
+            self.notify(self.resolver.cookie_warning, severity="warning", timeout=12)
+        if missing_js_runtime():
+            self.notify(JS_RUNTIME_HINT, severity="warning", timeout=15)
 
         self._apply_sidebar_width()
         self.set_interval(0.25, self._tick)
@@ -327,6 +349,7 @@ class YtmTui(App[None]):
         if not self.view_tracks or not (0 <= index < len(self.view_tracks)):
             return
         self.queue.load(self.view_tracks, start=index, source=self.view_title)
+        self._failures_in_a_row = 0  # a deliberate choice deserves a fresh run
         self._start_current()
 
     def _start_current(self) -> None:
@@ -341,6 +364,23 @@ class YtmTui(App[None]):
         worker = get_current_worker()
         try:
             url, headers = self.resolver.resolve(track.video_id)
+        except TrackBlocked as exc:
+            # This upload is barred, but the song itself may exist elsewhere.
+            swap = self._resolve_alternate(track, worker)
+            if swap is None:
+                self.call_from_thread(
+                    self.notify, f"Cannot play “{track.title}”: {exc}", severity="error"
+                )
+                self.call_from_thread(self._skip_after_failure)
+                return
+            alternate, url, headers = swap
+            self.call_from_thread(
+                self.notify,
+                f"“{track.title}” is blocked - playing another upload: "
+                f"“{alternate.title}”",
+                severity="warning",
+                timeout=8,
+            )
         except Exception as exc:
             self.call_from_thread(
                 self.notify, f"Cannot play “{track.title}”: {exc}", severity="error"
@@ -349,6 +389,7 @@ class YtmTui(App[None]):
             return
         if worker.is_cancelled:
             return
+        self._failures_in_a_row = 0
         try:
             self.player.play_url(url, headers)
         except Exception as exc:
@@ -358,7 +399,67 @@ class YtmTui(App[None]):
         if upcoming is not None:
             self.resolver.prefetch(upcoming.video_id)
 
+    # How many other uploads to try before giving up on a blocked track. Each
+    # costs a resolve, so keep it small enough to stay responsive.
+    MAX_ALTERNATES = 3
+
+    def _resolve_alternate(
+        self, track: Track, worker: Worker
+    ) -> tuple[Track, str, dict[str, str]] | None:
+        """First playable re-upload of a blocked track, or None.
+
+        Runs on the playback worker thread, so it may block.
+        """
+        known = self._alternates.get(track.video_id)
+        if known is not None:
+            try:
+                url, headers = self.resolver.resolve(known.video_id)
+            except Exception:
+                self._alternates.pop(track.video_id, None)  # it died too
+            else:
+                return known, url, headers
+
+        if self.library is None:
+            return None
+        try:
+            candidates = self.library.alternates(track, limit=self.MAX_ALTERNATES)
+        except Exception:
+            return None
+        if not candidates:
+            return None
+
+        # Resolve them at once rather than one after another: a blocked upload
+        # costs a couple of seconds to find out about, and we may try several.
+        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+            futures = {c.video_id: pool.submit(self.resolver.resolve, c.video_id)
+                       for c in candidates}
+            for candidate in candidates:  # keep best-match order, not finish order
+                if worker.is_cancelled:
+                    return None
+                try:
+                    url, headers = futures[candidate.video_id].result()
+                except Exception:
+                    continue  # blocked or dead as well; try the next one
+                self._alternates[track.video_id] = candidate
+                return candidate, url, headers
+        return None
+
+    # Give up once we have failed our way through the whole queue, but never
+    # sit through more than a handful of errors before saying something.
+    MAX_FAILURES_IN_A_ROW = 5
+
     def _skip_after_failure(self) -> None:
+        self._failures_in_a_row += 1
+        limit = min(len(self.queue.order) or 1, self.MAX_FAILURES_IN_A_ROW)
+        if self._failures_in_a_row >= limit:
+            self._failures_in_a_row = 0
+            self.player.stop()
+            self.notify(
+                f"Stopped after {limit} tracks in a row failed to play.",
+                severity="warning",
+                timeout=10,
+            )
+            return
         if self.queue.advance(manual=True) is not None:
             self._start_current()
 

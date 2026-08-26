@@ -1,5 +1,6 @@
 pillow==12.3.0
 requests==2.34.2
+secretstorage==3.5.0
 textual==8.2.8
 textual-image==0.13.2
 yt-dlp==2026.8.19
