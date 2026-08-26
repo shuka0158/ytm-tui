@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -65,10 +66,60 @@ BLOCKED_MARKERS = (
     "content is age-restricted",
 )
 
+# The JS runtime is a subprocess, and yt-dlp fails the whole extraction if it
+# writes anything at all to stderr. That is a transient condition, not a
+# property of the track, so one immediate retry usually gets it.
+RUNTIME_MARKERS = (
+    "error running deno process",
+    "error running node process",
+    "error running bun process",
+    "error running quickjs process",
+)
+
 BLOCKED_MESSAGE = (
     "age-restricted: YouTube refused this to the player even signed in. "
     "It normally still plays on youtube.com in a browser."
 )
+
+
+def _silence_helper_stderr() -> None:
+    """Stop yt-dlp's helper processes from scribbling on the interface.
+
+    Textual draws to stderr, and some yt-dlp spawns - the bgutil PO token
+    script, most visibly - inherit ours instead of redirecting it, so a line
+    like wgpu's "enumerate_adapters" complaint from deno lands on top of the
+    UI. Anything that already asks for a specific stderr keeps it; the rest go
+    to a log file we can read afterwards.
+    """
+    popen = yt_dlp.utils.Popen
+    if getattr(popen, "_ytmtui_silenced", False):
+        return
+
+    original = popen.__init__
+
+    def __init__(self, *args, **kwargs):
+        # stderr is the sixth positional argument; only fill in the gap when
+        # the caller left it out entirely.
+        if len(args) < 6:
+            kwargs.setdefault("stderr", _helper_stderr())
+        original(self, *args, **kwargs)
+
+    popen.__init__ = __init__
+    popen._ytmtui_silenced = True
+
+
+_helper_log = None
+
+
+def _helper_stderr():
+    """Append-mode handle on the helper log, or DEVNULL if it will not open."""
+    global _helper_log
+    if _helper_log is None:
+        try:
+            _helper_log = open(config.SUBPROCESS_LOG, "a", buffering=1)  # noqa: SIM115
+        except OSError:
+            _helper_log = subprocess.DEVNULL
+    return _helper_log
 
 
 class ResolveError(RuntimeError):
@@ -134,6 +185,7 @@ class Resolver:
         cookies_file: str | None = None,
     ) -> None:
         config.ensure_dirs()
+        _silence_helper_stderr()
         self._opts = {
             "quiet": True,
             "no_warnings": True,
@@ -233,12 +285,22 @@ class Resolver:
             self._remember_blocked(video_id, exc)
             raise
         except Exception as exc:
+            if any(marker in _clean(str(exc)).lower() for marker in RUNTIME_MARKERS):
+                try:
+                    info = self._extract(watch_url, self._opts)
+                except Exception as retry_exc:
+                    exc = retry_exc
+                else:
+                    return self._cache_stream(video_id, info)
             try:
                 info = self._retry_signed_in(watch_url, exc)
             except TrackBlocked as blocked_exc:
                 self._remember_blocked(video_id, blocked_exc)
                 raise
 
+        return self._cache_stream(video_id, info)
+
+    def _cache_stream(self, video_id: str, info: dict) -> tuple[str, dict[str, str]]:
         url, headers = self._stream_of(info)
         if not url:
             raise ResolveError("yt-dlp returned no playable audio stream")

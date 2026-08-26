@@ -27,6 +27,7 @@ CONFIG_DIR = ROOT / "config"
 CACHE_DIR = ROOT / "cache"
 ART_DIR = CACHE_DIR / "art"
 YTDLP_CACHE = CACHE_DIR / "ytdlp"
+SUBPROCESS_LOG = CACHE_DIR / "subprocess.log"
 
 BROWSER_AUTH = CONFIG_DIR / "browser.json"
 OAUTH_AUTH = CONFIG_DIR / "oauth.json"
