@@ -164,4 +164,45 @@ YouTube. Use it with your own account, at your own risk.
 
 ## License
 
-[MIT](LICENSE)
+[GNU General Public License v3.0 or later](LICENSE) (`GPL-3.0-or-later`).
+
+This is copyleft: anyone may use, study, modify and redistribute this program,
+but any copy or derivative work that is distributed must also be released under
+the GPL, with source included. Closed-source forks are not permitted.
+
+    ytm-tui - a terminal player for your YouTube Music account.
+    Copyright (C) 2026 shuka0158
+
+    This program is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+    Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Run `./ytm license` for the same notice at the terminal.
+
+### Dependency licenses
+
+All runtime dependencies are GPLv3-compatible:
+
+| Dependency | License |
+|------------|---------|
+| `textual`, `rich`, `ytmusicapi` | MIT |
+| `textual-image` | LGPL-3.0-or-later |
+| `pillow` | MIT-CMU |
+| `requests` | Apache-2.0 |
+| `yt-dlp` | Unlicense (public domain) |
+| `mpv`, `ffmpeg` | GPL/LGPL — invoked as separate processes, not linked |
+
+### Note on the earlier MIT release
+
+Commit `8a7eb1a` was published under the MIT license. That release stays MIT
+forever and cannot be revoked — anyone who obtained that snapshot may keep using
+it on MIT terms. Everything from the relicensing commit onward is GPLv3.

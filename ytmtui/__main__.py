@@ -1,17 +1,43 @@
-"""Entry point: `python -m ytmtui [setup|verify|logout]`."""
+# ytm-tui - a terminal player for your YouTube Music account.
+# Copyright (C) 2026 shuka0158
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Entry point: `python -m ytmtui [setup|verify|logout|license]`."""
 from __future__ import annotations
 
 import sys
 
-from . import config
+from . import __version__, config
 
-USAGE = """ytm - YouTube Music in the terminal
+NOTICE = f"""ytm-tui {__version__}
+Copyright (C) 2026 shuka0158
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law."""
+
+USAGE = f"""ytm - YouTube Music in the terminal
 
   ytm             start the player
   ytm setup       connect a Google account
   ytm verify      check the stored credentials
   ytm logout      delete the stored credentials
+  ytm license     licensing and warranty information
   ytm --help      this text
+
+{NOTICE}
 """
 
 
@@ -21,6 +47,10 @@ def main() -> int:
 
     if command in ("-h", "--help", "help"):
         print(USAGE)
+        return 0
+
+    if command in ("license", "version", "--version", "-V"):
+        print(NOTICE)
         return 0
 
     if command == "setup":
