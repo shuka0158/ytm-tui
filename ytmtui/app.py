@@ -38,7 +38,7 @@ from textual.widgets import (
 from textual.worker import Worker, get_current_worker
 from textual_image.widget import Image
 
-from . import art, config, cookies
+from . import art, config, cookies, themes
 from .api import AuthMissing, Library
 from .models import Playlist, Track, fmt_duration
 from .player import MpvPlayer
@@ -83,6 +83,7 @@ class HelpScreen(ModalScreen[None]):
   [cyan]R[/cyan]          start a radio from the highlighted track
   [cyan]a[/cyan]          append highlighted track to the queue
   [cyan]F5[/cyan]         reload playlists
+  [cyan]t[/cyan]          theme picker
   [cyan]tab[/cyan]        move between panes
 
   [cyan]?[/cyan] help     [cyan]q[/cyan] quit
@@ -96,6 +97,44 @@ change and redistribute it. See the LICENSE file for details.[/dim]"""
             yield Static(self.HELP)
 
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ThemeScreen(ModalScreen[str | None]):
+    """Theme picker. Moving the highlight previews; escape puts it back."""
+
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
+
+    def __init__(self, current: str) -> None:
+        super().__init__()
+        self.names = themes.available()
+        self.current = current
+        try:
+            self.start_index = self.names.index(current)
+        except ValueError:
+            self.start_index = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="theme-box"):
+            yield Label("Theme")
+            yield ListView(
+                *(ListItem(Label(themes.label(n))) for n in self.names),
+                initial_index=self.start_index,
+                id="theme-list",
+            )
+            yield Static("[dim]↑↓ preview   enter apply   esc cancel[/dim]")
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        index = event.list_view.index
+        if index is not None and 0 <= index < len(self.names):
+            self.app.theme = self.names[index]
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        index = event.list_view.index
+        self.dismiss(self.names[index] if index is not None else None)
+
+    def action_cancel(self) -> None:
+        self.app.theme = self.current
         self.dismiss(None)
 
 
@@ -121,6 +160,7 @@ class YtmTui(App[None]):
         ("R", "radio", "Radio"),
         ("a", "append", "Queue"),
         ("f5,ctrl+r", "reload", "Reload"),
+        ("t", "theme", "Theme"),
         ("question_mark", "help", "Help"),
         ("q,ctrl+c", "quit", "Quit"),
     ]
@@ -177,6 +217,10 @@ class YtmTui(App[None]):
         yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
+        for theme in themes.CUSTOM_THEMES:
+            self.register_theme(theme)
+        self.theme = themes.normalise(self.settings.get("theme"))
+
         table = self.query_one("#tracks", DataTable)
         # Keep the ColumnKeys: auto-width columns never shrink again once a
         # wide value has been seen, so the text columns are sized explicitly.
@@ -208,6 +252,7 @@ class YtmTui(App[None]):
             volume=self.volume,
             shuffle=self.queue.shuffle,
             repeat=self.queue.repeat,
+            theme=self.theme,
         )
         config.save_settings(self.settings)
         self.resolver.shutdown()
@@ -629,6 +674,17 @@ class YtmTui(App[None]):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_theme(self) -> None:
+        self.push_screen(ThemeScreen(self.theme), callback=self._set_theme)
+
+    def _set_theme(self, name: str | None) -> None:
+        if not name:
+            return
+        self.theme = name
+        self.settings["theme"] = name
+        config.save_settings(self.settings)
+        self.notify(f"Theme: {themes.label(name)}", timeout=2)
 
     def action_search(self) -> None:
         self.push_screen(SearchScreen(), callback=self._run_search)

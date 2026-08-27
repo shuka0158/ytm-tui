@@ -115,3 +115,32 @@ HelpScreen {
     background: $panel;
     border: round $accent;
 }
+
+ThemeScreen {
+    align: center middle;
+    background: $surface 70%;
+}
+
+#theme-box {
+    width: 44;
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+}
+
+#theme-list {
+    height: auto;
+    max-height: 18;
+    margin: 1 0;
+    background: $panel;
+    scrollbar-size-vertical: 1;
+}
+
+#theme-list > ListItem {
+    padding: 0 1;
+}
+
+#theme-list > ListItem.--highlight {
+    background: $accent-darken-2;
+}

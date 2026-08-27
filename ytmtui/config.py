@@ -41,6 +41,7 @@ DEFAULTS: dict[str, Any] = {
     "shuffle": False,
     "repeat": "off",          # off | all | one
     "last_playlist": None,
+    "theme": "tokyo-night",    # see ytmtui/themes.py for the full list
     "format": "bestaudio[acodec=opus]/bestaudio/best",
     # Sign-in gated tracks need a logged-in session. Left null, we reuse the
     # one `ytm setup` already stored. Override with a browser profile

@@ -22,6 +22,8 @@ your terminal, with real album art via the kitty graphics protocol.
 - Real album art in the terminal (kitty graphics protocol; unicode-block fallback
   elsewhere)
 - Queue, shuffle, repeat, seek, volume — remembered between runs
+- Sixteen themes — Tokyo Night, Gruvbox, Catppuccin, Nord, Dracula, two
+  high-contrast ones and your terminal's own ANSI palette
 
 ## How it works
 
@@ -140,11 +142,31 @@ steps above.
 | `R` | start a radio from the highlighted track |
 | `a` | append the highlighted track to the queue |
 | `F5` | reload playlists |
+| `t` | theme picker |
 | `tab` | move between panes |
 | `?` | help |
 | `q` | quit |
 
-Volume, shuffle and repeat are remembered in `config/settings.json`.
+Volume, shuffle, repeat and the theme are remembered in `config/settings.json`.
+
+### Themes
+
+`t` opens the picker; moving the highlight previews the theme live, `enter`
+keeps it, `esc` puts the old one back. Sixteen to choose from:
+
+Tokyo Night (default), Catppuccin Mocha, Gruvbox, Nord, Dracula, Monokai,
+Rosé Pine, Solarized Dark, Textual Dark, **High Contrast**, Terminal (dark ANSI),
+Catppuccin Latte, Solarized Light, Textual Light, **High Contrast Light**,
+Terminal (light ANSI).
+
+The two high-contrast themes are pure black-on-white and white-on-black with
+nothing dimmed; every accent in them clears 7:1 against the background, which is
+WCAG AAA. The two Terminal themes paint with the sixteen ANSI colours your own
+terminal is configured with, so ytm-tui matches whatever the rest of your shell
+looks like.
+
+You can also set it by hand — `"theme": "gruvbox"` in `config/settings.json`.
+An unknown name falls back to the default instead of failing to start.
 
 ### Mixes
 
