@@ -281,7 +281,7 @@ rm -rf .venv && python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Notes & disclaimer
+##  Notes & disclaimer
 
 This is an unofficial client that uses private YouTube Music endpoints via
 `ytmusicapi`. It is not affiliated with, endorsed by, or supported by Google or
