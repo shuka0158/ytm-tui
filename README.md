@@ -1,5 +1,7 @@
 # ytm-tui
 
+#[pls Don't forget to star this repo]
+
 A terminal music player for **your own YouTube Music account**. Browse your
 playlists, liked songs and library, search, start radios, and play — all inside
 your terminal, with real album art via the kitty graphics protocol.
