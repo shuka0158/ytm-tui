@@ -201,6 +201,12 @@ class Resolver:
             # 3x faster on a cold resolve. _fallback_opts (plain web, built
             # lazily) covers the rare video android can't serve.
             "extractor_args": {"youtube": {"player_client": ["android"]}},
+            # yt-dlp now solves the web client's signature/n challenges with a
+            # downloadable script rather than bundled code. Without this, the
+            # web client - which is what the signed-in retry uses - resolves
+            # no formats at all and looks identical to a hard block. Cached
+            # after the first fetch, so this costs nothing on later resolves.
+            "remote_components": ["ejs:github"],
         }
         self._fallback_opts = {k: v for k, v in self._opts.items() if k != "extractor_args"}
         self.cookie_warning: str | None = None
