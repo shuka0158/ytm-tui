@@ -251,9 +251,12 @@ git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider ~/bgutil-ytdlp
 cd ~/bgutil-ytdlp-pot-provider/server && npm install && npx tsc
 ```
 
-This is not required — the player works without it — and in testing it did not
-unlock the age-restricted case above. It is here because it silences the
-"GVS PO Token which was not provided" warnings and is likely to matter more over
+This is not required — the player works without it. Earlier testing of the
+age-restricted case above was against a signed-in retry that (by a since-fixed
+bug) never actually reached the web client, so it wasn't a fair test of what a
+PO token can unlock; it's worth trying again if you're hitting that message
+often. It also silences the "GVS PO Token which was not provided" warnings
+regardless, and is likely to matter more over
 time.
 
 ### When something will not play
