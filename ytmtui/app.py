@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -66,6 +67,33 @@ class SearchScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class DownloadScreen(ModalScreen[str | None]):
+    """Asks where to save a track before downloading it."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, track_title: str, default_dir: str) -> None:
+        super().__init__()
+        self.track_title = track_title
+        self.default_dir = default_dir
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="search-box"):
+            yield Label(f"Download “{self.track_title}” to…")
+            yield Input(value=self.default_dir, id="search-input")
+
+    def on_mount(self) -> None:
+        input_ = self.query_one(Input)
+        input_.focus()
+        input_.cursor_position = len(input_.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or self.default_dir)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class HelpScreen(ModalScreen[None]):
     BINDINGS = [("escape,question_mark,q", "cancel", "Close")]
 
@@ -82,7 +110,7 @@ class HelpScreen(ModalScreen[None]):
   [cyan]/[/cyan]          search YouTube Music
   [cyan]R[/cyan]          start a radio from the highlighted track
   [cyan]a[/cyan]          append highlighted track to the queue
-  [cyan]D[/cyan]          download highlighted track (saved to Downloads)
+  [cyan]D[/cyan]          download highlighted track (asks for a folder)
   [cyan]F5[/cyan]         reload playlists
   [cyan]t[/cyan]          theme picker
   [cyan]tab[/cyan]        move between panes
@@ -820,14 +848,22 @@ class YtmTui(App[None]):
         if track.local_path:
             self.notify("Already a local file.", timeout=2)
             return
+        self.push_screen(
+            DownloadScreen(track.title, str(config.DOWNLOADS_DIR)),
+            callback=lambda dest: self._start_download(track, dest),
+        )
+
+    def _start_download(self, track: Track, dest: str | None) -> None:
+        if not dest:
+            return
         self.notify(f"Downloading “{track.title}”…", timeout=4)
-        self._download_worker(track)
+        self._download_worker(track, Path(dest).expanduser())
 
     @work(thread=True, group="download")
-    def _download_worker(self, track: Track) -> None:
+    def _download_worker(self, track: Track, dest_dir: Path) -> None:
         base = local.sanitize_filename(f"{track.artist} - {track.title}")
         try:
-            self.resolver.download(track.video_id, config.DOWNLOADS_DIR, base)
+            self.resolver.download(track.video_id, dest_dir, base)
         except Exception as exc:
             self.call_from_thread(
                 self.notify,
@@ -837,9 +873,9 @@ class YtmTui(App[None]):
             )
             return
         self.call_from_thread(
-            self.notify, f"Saved “{track.title}” to Downloads.", timeout=5
+            self.notify, f"Saved “{track.title}” to {dest_dir}.", timeout=5
         )
-        if self.view_title == "Downloads":
+        if self.view_title == "Downloads" and dest_dir.resolve() == config.DOWNLOADS_DIR.resolve():
             self.call_from_thread(self._scan_downloads_worker)
 
 
