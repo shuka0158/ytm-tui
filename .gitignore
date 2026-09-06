@@ -4,6 +4,9 @@ config/
 # Local caches
 cache/
 
+# Tracks saved via the "D" download action
+downloads/
+
 # Virtualenv
 .venv/
 venv/

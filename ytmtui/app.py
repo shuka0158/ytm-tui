@@ -38,7 +38,7 @@ from textual.widgets import (
 from textual.worker import Worker, get_current_worker
 from textual_image.widget import Image
 
-from . import art, config, cookies, themes
+from . import art, config, cookies, local, themes
 from .api import AuthMissing, Library
 from .models import Playlist, Track, fmt_duration
 from .player import MpvPlayer
@@ -82,9 +82,14 @@ class HelpScreen(ModalScreen[None]):
   [cyan]/[/cyan]          search YouTube Music
   [cyan]R[/cyan]          start a radio from the highlighted track
   [cyan]a[/cyan]          append highlighted track to the queue
+  [cyan]D[/cyan]          download highlighted track (saved to Downloads)
   [cyan]F5[/cyan]         reload playlists
   [cyan]t[/cyan]          theme picker
   [cyan]tab[/cyan]        move between panes
+
+[b]Local & Downloads[/b]
+  [cyan]Local[/cyan]      browse audio files from your local music folders
+  [cyan]Downloads[/cyan]  tracks saved from ytm-tui with [cyan]D[/cyan]
 
   [cyan]?[/cyan] help     [cyan]q[/cyan] quit
 
@@ -159,6 +164,7 @@ class YtmTui(App[None]):
         ("slash", "search", "Search"),
         ("R", "radio", "Radio"),
         ("a", "append", "Queue"),
+        ("D", "download", "Download"),
         ("f5,ctrl+r", "reload", "Reload"),
         ("t", "theme", "Theme"),
         ("question_mark", "help", "Help"),
@@ -181,6 +187,9 @@ class YtmTui(App[None]):
         self.queue.repeat = self.settings.get("repeat", "off")
         self.volume = int(self.settings.get("volume", 80))
         self.playlists: list[Playlist] = []
+        # Parallel to the "#playlists" ListView's children: what each row opens.
+        # ("local", None) | ("downloads", None) | ("playlist", Playlist)
+        self._sidebar_kinds: list[tuple[str, Playlist | None]] = []
         self.view_tracks: list[Track] = []
         self.view_title: str = ""
         self.playing_row: int | None = None
@@ -200,7 +209,7 @@ class YtmTui(App[None]):
         yield Header(show_clock=True, icon=" ")
         with Horizontal(id="main"):
             with Vertical(id="sidebar"):
-                yield Static("Playlists", classes="pane-title")
+                yield Static("Library", classes="pane-title")
                 yield ListView(id="playlists")
             with Vertical(id="content"):
                 yield Static("", id="tracks-title", classes="pane-title")
@@ -245,6 +254,9 @@ class YtmTui(App[None]):
 
         self._apply_sidebar_width()
         self.set_interval(0.25, self._tick)
+        # Local/Downloads don't need the network, so they show up immediately
+        # rather than waiting on the library connection below.
+        self._fill_playlists([])
         self._connect_library()
 
     def on_unmount(self) -> None:
@@ -283,20 +295,55 @@ class YtmTui(App[None]):
     def _fill_playlists(self, playlists: list[Playlist]) -> None:
         self.playlists = playlists
         view = self.query_one("#playlists", ListView)
+        had_selection = view.index is not None
         view.clear()
+        self._sidebar_kinds = [("local", None), ("downloads", None)]
+        view.append(ListItem(Label("[b]🖥  Local[/b]\n[dim]on-disk music[/dim]")))
+        view.append(ListItem(Label("[b]⬇  Downloads[/b]\n[dim]saved from ytm-tui[/dim]")))
         for playlist in playlists:
             label = f"[b]{playlist.title}[/b]"
             if playlist.subtitle:
                 label += f"\n[dim]{playlist.subtitle}[/dim]"
             view.append(ListItem(Label(label)))
+            self._sidebar_kinds.append(("playlist", playlist))
         if playlists:
-            view.index = 0
+            view.index = 2  # first real playlist, past Local/Downloads
             self._open_playlist(playlists[0])
+        elif not had_selection:
+            view.index = 0
 
     def _open_playlist(self, playlist: Playlist) -> None:
         self.view_title = playlist.title
         self.query_one("#tracks-title", Static).update(f"{playlist.title}  [dim]loading…[/dim]")
         self._load_tracks(playlist)
+
+    def _open_local(self) -> None:
+        self.view_title = "Local"
+        self.query_one("#tracks-title", Static).update("Local  [dim]scanning…[/dim]")
+        self._scan_local_worker()
+
+    @work(thread=True, group="tracks", exclusive=True)
+    def _scan_local_worker(self) -> None:
+        dirs = config.local_music_dirs(self.settings)
+        tracks = local.scan(dirs)
+        self.call_from_thread(self._show_tracks, tracks, "Local")
+        if not dirs:
+            self.call_from_thread(
+                self.notify,
+                "No local music folders found. Add paths to \"local_music_dirs\" "
+                f"in {config.SETTINGS_FILE}, or drop files into ~/Music.",
+                timeout=10,
+            )
+
+    def _open_downloads(self) -> None:
+        self.view_title = "Downloads"
+        self.query_one("#tracks-title", Static).update("Downloads  [dim]scanning…[/dim]")
+        self._scan_downloads_worker()
+
+    @work(thread=True, group="tracks", exclusive=True)
+    def _scan_downloads_worker(self) -> None:
+        tracks = local.scan([config.DOWNLOADS_DIR])
+        self.call_from_thread(self._show_tracks, tracks, "Downloads")
 
     @work(thread=True, group="tracks", exclusive=True)
     def _load_tracks(self, playlist: Playlist) -> None:
@@ -389,9 +436,16 @@ class YtmTui(App[None]):
     # -- events ------------------------------------------------------------
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         index = self.query_one("#playlists", ListView).index
-        if index is not None and 0 <= index < len(self.playlists):
-            self._open_playlist(self.playlists[index])
-            self.query_one("#tracks", DataTable).focus()
+        if index is None or not (0 <= index < len(self._sidebar_kinds)):
+            return
+        kind, payload = self._sidebar_kinds[index]
+        if kind == "local":
+            self._open_local()
+        elif kind == "downloads":
+            self._open_downloads()
+        elif payload is not None:
+            self._open_playlist(payload)
+        self.query_one("#tracks", DataTable).focus()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self._play_from_view(event.cursor_row)
@@ -409,7 +463,22 @@ class YtmTui(App[None]):
         if track is None:
             return
         self._set_now_playing(track)
-        self._resolve_and_play(track)
+        if track.local_path:
+            self._play_local(track)
+        else:
+            self._resolve_and_play(track)
+
+    @work(thread=True, group="play", exclusive=True)
+    def _play_local(self, track: Track) -> None:
+        try:
+            self.player.play_url(track.local_path)
+        except Exception as exc:
+            self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
+            return
+        self._failures_in_a_row = 0
+        upcoming = self.queue.peek_next()
+        if upcoming is not None and not upcoming.local_path:
+            self.resolver.prefetch(upcoming.video_id)
 
     @work(thread=True, group="play", exclusive=True)
     def _resolve_and_play(self, track: Track) -> None:
@@ -448,7 +517,7 @@ class YtmTui(App[None]):
             self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
             return
         upcoming = self.queue.peek_next()
-        if upcoming is not None:
+        if upcoming is not None and not upcoming.local_path:
             self.resolver.prefetch(upcoming.video_id)
 
     # How many other uploads to try before giving up on a blocked track. Each
@@ -713,6 +782,9 @@ class YtmTui(App[None]):
         if not self.view_tracks or not (0 <= row < len(self.view_tracks)):
             return
         track = self.view_tracks[row]
+        if track.local_path:
+            self.notify("Radio isn't available for local files.", timeout=3)
+            return
         self.query_one("#tracks-title", Static).update(
             f"Radio: {track.title}  [dim]building…[/dim]"
         )
@@ -738,6 +810,37 @@ class YtmTui(App[None]):
         track = self.view_tracks[row]
         self.queue.append(track)
         self.notify(f"Queued: {track.title}", timeout=2)
+
+    def action_download(self) -> None:
+        table = self.query_one("#tracks", DataTable)
+        row = table.cursor_row
+        if not self.view_tracks or not (0 <= row < len(self.view_tracks)):
+            return
+        track = self.view_tracks[row]
+        if track.local_path:
+            self.notify("Already a local file.", timeout=2)
+            return
+        self.notify(f"Downloading “{track.title}”…", timeout=4)
+        self._download_worker(track)
+
+    @work(thread=True, group="download")
+    def _download_worker(self, track: Track) -> None:
+        base = local.sanitize_filename(f"{track.artist} - {track.title}")
+        try:
+            self.resolver.download(track.video_id, config.DOWNLOADS_DIR, base)
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify,
+                f"Download failed for “{track.title}”: {exc}",
+                severity="error",
+                timeout=10,
+            )
+            return
+        self.call_from_thread(
+            self.notify, f"Saved “{track.title}” to Downloads.", timeout=5
+        )
+        if self.view_title == "Downloads":
+            self.call_from_thread(self._scan_downloads_worker)
 
 
 def main() -> None:
