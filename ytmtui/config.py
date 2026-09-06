@@ -28,6 +28,9 @@ CACHE_DIR = ROOT / "cache"
 ART_DIR = CACHE_DIR / "art"
 YTDLP_CACHE = CACHE_DIR / "ytdlp"
 SUBPROCESS_LOG = CACHE_DIR / "subprocess.log"
+# Where the "D" download-track action saves audio. Shown in the UI as its own
+# "Downloads" section, browsable the same way as Local.
+DOWNLOADS_DIR = ROOT / "downloads"
 
 BROWSER_AUTH = CONFIG_DIR / "browser.json"
 OAUTH_AUTH = CONFIG_DIR / "oauth.json"
@@ -48,6 +51,10 @@ DEFAULTS: dict[str, Any] = {
     # ("firefox", "chrome:Profile 1", ...) or a Netscape cookies.txt path.
     "cookies_from_browser": None,
     "cookies_file": None,
+    # Folders the "Local" section scans for audio files. Empty means "auto":
+    # ~/Music if it exists. Add paths here to include more, e.g. ["~/Music",
+    # "/mnt/nas/songs"].
+    "local_music_dirs": [],
 }
 
 # yt-dlp accepts BROWSER[+KEYRING][:PROFILE][::CONTAINER] as one string.
@@ -79,8 +86,17 @@ def parse_cookies_from_browser(spec: str) -> tuple[str, str | None, str | None, 
 
 
 def ensure_dirs() -> None:
-    for d in (CONFIG_DIR, CACHE_DIR, ART_DIR, YTDLP_CACHE):
+    for d in (CONFIG_DIR, CACHE_DIR, ART_DIR, YTDLP_CACHE, DOWNLOADS_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+
+def local_music_dirs(settings: dict[str, Any]) -> list[Path]:
+    """Folders the Local section scans: configured paths, or ~/Music by default."""
+    configured = settings.get("local_music_dirs") or []
+    if configured:
+        return [Path(p).expanduser() for p in configured]
+    fallback = Path.home() / "Music"
+    return [fallback] if fallback.is_dir() else []
 
 
 def load_settings() -> dict[str, Any]:

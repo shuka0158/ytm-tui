@@ -396,6 +396,64 @@ class Resolver:
                 f"{_last_line(text)} (retry with your saved session failed too)"
             ) from retry_exc
 
+    def download(self, video_id: str, dest_dir: Path, filename_base: str) -> str:
+        """Download the best audio for `video_id` into `dest_dir`. Returns the
+        saved file's path.
+
+        Blocking - run on a worker thread. Reuses resolve()'s sign-in / age-gate
+        ladder (android client first, web-client fallback, then a signed-in
+        retry) but with skip_download turned off, since none of that logic
+        cares whether the extraction actually downloads or not.
+        """
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        watch_url = f"https://music.youtube.com/watch?v={video_id}"
+        outtmpl = str(dest_dir / f"{filename_base}.%(ext)s")
+
+        def _run(base_opts: dict) -> dict:
+            opts = {**base_opts, "skip_download": False, "outtmpl": outtmpl, "overwrites": True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(watch_url, download=True)
+            if not info:
+                raise ResolveError("yt-dlp returned nothing for this track")
+            return info
+
+        try:
+            info = _run(self._opts)
+        except Exception as exc:
+            lowered = _clean(str(exc)).lower()
+            if any(m in lowered for m in BLOCKED_MARKERS):
+                raise TrackBlocked(BLOCKED_MESSAGE) from exc
+            if any(m in lowered for m in SIGNIN_MARKERS):
+                if not self.has_session:
+                    raise TrackBlocked(
+                        "this track needs a signed-in session - run `ytm setup`, "
+                        "or see `ytm cookies`"
+                    ) from exc
+                try:
+                    info = _run(self._auth_opts)
+                except Exception as retry_exc:
+                    retry_text = _clean(str(retry_exc)).lower()
+                    if any(m in retry_text for m in BLOCKED_MARKERS):
+                        raise TrackBlocked(BLOCKED_MESSAGE) from retry_exc
+                    raise ResolveError(_last_line(str(retry_exc))) from retry_exc
+            else:
+                # Likely just a gap in the fast android client's format list.
+                try:
+                    info = _run(self._fallback_opts)
+                except Exception as fallback_exc:
+                    raise ResolveError(_last_line(str(fallback_exc))) from fallback_exc
+
+        path = info.get("filepath")
+        if not path:
+            requested = info.get("requested_downloads") or []
+            if requested:
+                path = requested[0].get("filepath")
+        if not path:
+            with yt_dlp.YoutubeDL({**self._opts, "outtmpl": outtmpl}) as ydl:
+                path = ydl.prepare_filename(info)
+        return path
+
     def prefetch(self, video_id: str) -> None:
         """Warm the cache for a track we are about to need. Never raises."""
         if not video_id or self._lookup(video_id) is not None:

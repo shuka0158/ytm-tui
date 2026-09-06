@@ -52,6 +52,9 @@ class Track:
     album: str = ""
     duration: int = 0
     thumb: str = ""
+    # Set for a track that lives on disk (Local / Downloads sections): the
+    # absolute file path to play directly, bypassing the yt-dlp resolver.
+    local_path: str = ""
 
     @classmethod
     def from_item(cls, item: dict) -> "Track | None":
