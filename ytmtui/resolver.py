@@ -76,6 +76,12 @@ RUNTIME_MARKERS = (
     "error running quickjs process",
 )
 
+# download() never wants a muxed video+audio fallback ("best" would give one
+# when a client's format list has no real audio-only entry), unlike the
+# streaming format in config.DEFAULTS which can tolerate that since mpv just
+# discards the video track.
+DOWNLOAD_AUDIO_FORMAT = "bestaudio[acodec=opus]/bestaudio"
+
 BLOCKED_MESSAGE = (
     "age-restricted: YouTube refused this to the player even signed in. "
     "It normally still plays on youtube.com in a browser."
@@ -411,7 +417,19 @@ class Resolver:
         outtmpl = str(dest_dir / f"{filename_base}.%(ext)s")
 
         def _run(base_opts: dict) -> dict:
-            opts = {**base_opts, "skip_download": False, "outtmpl": outtmpl, "overwrites": True}
+            opts = {
+                **base_opts,
+                # The configured streaming format ends in "/best", which for
+                # some videos the android client only serves as a muxed
+                # video+audio file - fine for mpv (it just ignores the video
+                # track), but wrong for a saved file. Force audio-only here,
+                # even if that means falling through to a client with a
+                # fuller format list instead of silently saving a video.
+                "format": DOWNLOAD_AUDIO_FORMAT,
+                "skip_download": False,
+                "outtmpl": outtmpl,
+                "overwrites": True,
+            }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(watch_url, download=True)
             if not info:
