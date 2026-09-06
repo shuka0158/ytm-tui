@@ -41,6 +41,14 @@ Screen {
     width: 1fr;
 }
 
+#download-status {
+    height: auto;
+    max-height: 4;
+    background: $panel;
+    color: $warning;
+    padding: 0 1;
+}
+
 #tracks {
     height: 1fr;
     scrollbar-size-vertical: 1;

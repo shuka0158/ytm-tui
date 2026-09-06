@@ -33,6 +33,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
@@ -402,7 +403,13 @@ class Resolver:
                 f"{_last_line(text)} (retry with your saved session failed too)"
             ) from retry_exc
 
-    def download(self, video_id: str, dest_dir: Path, filename_base: str) -> str:
+    def download(
+        self,
+        video_id: str,
+        dest_dir: Path,
+        filename_base: str,
+        on_progress: Callable[[float | None, float | None], None] | None = None,
+    ) -> str:
         """Download the best audio for `video_id` into `dest_dir`. Returns the
         saved file's path.
 
@@ -410,11 +417,26 @@ class Resolver:
         ladder (android client first, web-client fallback, then a signed-in
         retry) but with skip_download turned off, since none of that logic
         cares whether the extraction actually downloads or not.
+
+        `on_progress`, if given, is called from this same thread as
+        (percent complete or None if unknown, bytes/sec or None).
         """
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         watch_url = f"https://music.youtube.com/watch?v={video_id}"
         outtmpl = str(dest_dir / f"{filename_base}.%(ext)s")
+
+        def _hook(d: dict) -> None:
+            if on_progress is None:
+                return
+            status = d.get("status")
+            if status == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                downloaded = d.get("downloaded_bytes") or 0
+                percent = (downloaded / total * 100) if total else None
+                on_progress(percent, d.get("speed"))
+            elif status == "finished":
+                on_progress(100.0, None)
 
         def _run(base_opts: dict) -> dict:
             opts = {
@@ -429,6 +451,7 @@ class Resolver:
                 "skip_download": False,
                 "outtmpl": outtmpl,
                 "overwrites": True,
+                "progress_hooks": [_hook],
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(watch_url, download=True)

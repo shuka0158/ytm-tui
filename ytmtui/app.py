@@ -18,6 +18,7 @@
 """The Textual UI."""
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -229,6 +230,9 @@ class YtmTui(App[None]):
         self._alternates: dict[str, Track] = {}
         self._rendered_width: int = 0
         self._col_keys: dict[str, object] = {}
+        # Track title -> percent complete (or None while size is unknown),
+        # for whichever downloads are in flight right now.
+        self._downloads: dict[str, float | None] = {}
 
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -241,6 +245,7 @@ class YtmTui(App[None]):
                 yield ListView(id="playlists")
             with Vertical(id="content"):
                 yield Static("", id="tracks-title", classes="pane-title")
+                yield Static("", id="download-status")
                 yield DataTable(id="tracks", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="now"):
             yield Image(id="art")
@@ -269,6 +274,8 @@ class YtmTui(App[None]):
             "album": table.add_column("Album", key="album", width=20),
             "time": table.add_column("Time", key="time", width=5),
         }
+
+        self.query_one("#download-status", Static).display = False
 
         try:
             self.player.start(volume=self.volume)
@@ -856,15 +863,28 @@ class YtmTui(App[None]):
     def _start_download(self, track: Track, dest: str | None) -> None:
         if not dest:
             return
-        self.notify(f"Downloading “{track.title}”…", timeout=4)
+        self._set_download_progress(track.title, None)
         self._download_worker(track, Path(dest).expanduser())
 
     @work(thread=True, group="download")
     def _download_worker(self, track: Track, dest_dir: Path) -> None:
         base = local.sanitize_filename(f"{track.artist} - {track.title}")
+        last_sent = 0.0
+
+        def on_progress(percent: float | None, speed: float | None) -> None:
+            nonlocal last_sent
+            # yt-dlp fires this many times a second; a UI refresh that often
+            # is wasted work. 100% (or an unknown total) always gets through.
+            now = time.monotonic()
+            if percent is not None and 0 < percent < 100 and now - last_sent < 0.25:
+                return
+            last_sent = now
+            self.call_from_thread(self._set_download_progress, track.title, percent)
+
         try:
-            self.resolver.download(track.video_id, dest_dir, base)
+            self.resolver.download(track.video_id, dest_dir, base, on_progress=on_progress)
         except Exception as exc:
+            self.call_from_thread(self._clear_download_progress, track.title)
             self.call_from_thread(
                 self.notify,
                 f"Download failed for “{track.title}”: {exc}",
@@ -872,11 +892,32 @@ class YtmTui(App[None]):
                 timeout=10,
             )
             return
+        self.call_from_thread(self._clear_download_progress, track.title)
         self.call_from_thread(
             self.notify, f"Saved “{track.title}” to {dest_dir}.", timeout=5
         )
         if self.view_title == "Downloads" and dest_dir.resolve() == config.DOWNLOADS_DIR.resolve():
             self.call_from_thread(self._scan_downloads_worker)
+
+    def _set_download_progress(self, title: str, percent: float | None) -> None:
+        self._downloads[title] = percent
+        self._render_download_status()
+
+    def _clear_download_progress(self, title: str) -> None:
+        self._downloads.pop(title, None)
+        self._render_download_status()
+
+    def _render_download_status(self) -> None:
+        widget = self.query_one("#download-status", Static)
+        if not self._downloads:
+            widget.display = False
+            return
+        parts = []
+        for title, percent in self._downloads.items():
+            pct_text = f"{percent:4.0f}%" if percent is not None else " …  "
+            parts.append(f"⬇ [b]{pct_text}[/b] {title}")
+        widget.update("\n".join(parts))
+        widget.display = True
 
 
 def main() -> None:
