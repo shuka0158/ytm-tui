@@ -90,7 +90,7 @@ Screen {
     margin-top: 1;
 }
 
-SearchScreen {
+SearchScreen, DownloadScreen {
     align: center middle;
     background: $surface 60%;
 }
