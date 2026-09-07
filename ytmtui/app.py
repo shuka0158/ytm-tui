@@ -28,6 +28,7 @@ from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import (
+    Button,
     DataTable,
     Footer,
     Header,
@@ -95,6 +96,26 @@ class DownloadScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ImportFolderScreen(ModalScreen[str | None]):
+    """Asks for a folder path to add to the Local section."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="search-box"):
+            yield Label("Import folder…")
+            yield Input(placeholder="~/Music or /mnt/nas/songs", id="search-input")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class HelpScreen(ModalScreen[None]):
     BINDINGS = [("escape,question_mark,q", "cancel", "Close")]
 
@@ -117,6 +138,7 @@ class HelpScreen(ModalScreen[None]):
 
 [b]Local & Downloads[/b]
   [cyan]Local[/cyan]      browse audio files from your local music folders
+                [cyan]Import Folder…[/cyan] button adds another folder to scan
   [cyan]Downloads[/cyan]  tracks saved from ytm-tui with [cyan]d[/cyan]
 
   [cyan]?[/cyan] help     [cyan]q[/cyan] quit
@@ -242,7 +264,9 @@ class YtmTui(App[None]):
                 yield Static("Library", classes="pane-title")
                 yield ListView(id="playlists")
             with Vertical(id="content"):
-                yield Static("", id="tracks-title", classes="pane-title")
+                with Horizontal(id="tracks-header", classes="pane-title"):
+                    yield Static("", id="tracks-title")
+                    yield Button("Import Folder…", id="import-folder-btn")
                 yield Static("", id="download-status")
                 yield DataTable(id="tracks", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="now"):
@@ -274,6 +298,7 @@ class YtmTui(App[None]):
         }
 
         self.query_one("#download-status", Static).display = False
+        self.query_one("#import-folder-btn", Button).display = False
 
         try:
             self.player.start(volume=self.volume)
@@ -355,6 +380,28 @@ class YtmTui(App[None]):
         self.query_one("#tracks-title", Static).update("Local  [dim]scanning…[/dim]")
         self._scan_local_worker()
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "import-folder-btn":
+            self.push_screen(ImportFolderScreen(), callback=self._import_folder)
+
+    def _import_folder(self, raw_path: str | None) -> None:
+        if not raw_path:
+            return
+        path = Path(raw_path).expanduser()
+        if not path.is_dir():
+            self.notify(f"Not a folder: {path}", severity="error", timeout=5)
+            return
+        dirs = self.settings.setdefault("local_music_dirs", [])
+        resolved = str(path.resolve())
+        if resolved in (str(Path(d).expanduser().resolve()) for d in dirs):
+            self.notify(f"Already imported: {resolved}", timeout=3)
+            return
+        dirs.append(resolved)
+        config.save_settings(self.settings)
+        self.notify(f"Imported: {resolved}", timeout=3)
+        if self.view_title == "Local":
+            self._open_local()
+
     @work(thread=True, group="tracks", exclusive=True)
     def _scan_local_worker(self) -> None:
         dirs = config.local_music_dirs(self.settings)
@@ -408,6 +455,7 @@ class YtmTui(App[None]):
         self.query_one("#tracks-title", Static).update(
             f"{title}  [dim]{len(tracks)} tracks[/dim]"
         )
+        self.query_one("#import-folder-btn", Button).display = title == "Local"
 
     @staticmethod
     def _clip(text: str, width: int) -> str:

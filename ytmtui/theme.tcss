@@ -18,6 +18,30 @@ Screen {
     height: 1;
 }
 
+#tracks-header {
+    align-horizontal: right;
+}
+
+#tracks-header > #tracks-title {
+    width: 1fr;
+    background: transparent;
+    padding: 0;
+}
+
+#import-folder-btn {
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+    background: $accent-darken-2;
+    color: $text;
+    text-style: none;
+}
+
+#import-folder-btn:hover {
+    background: $accent;
+}
+
 #sidebar {
     width: 32;
     border-right: solid $primary-darken-2;
