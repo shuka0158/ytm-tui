@@ -109,16 +109,15 @@ class HelpScreen(ModalScreen[None]):
 
 [b]Library[/b]
   [cyan]/[/cyan]          search YouTube Music
-  [cyan]R[/cyan]          start a radio from the highlighted track
   [cyan]a[/cyan]          append highlighted track to the queue
-  [cyan]D[/cyan]          download highlighted track (asks for a folder)
+  [cyan]d[/cyan]          download highlighted track (asks for a folder)
   [cyan]F5[/cyan]         reload playlists
   [cyan]t[/cyan]          theme picker
   [cyan]tab[/cyan]        move between panes
 
 [b]Local & Downloads[/b]
   [cyan]Local[/cyan]      browse audio files from your local music folders
-  [cyan]Downloads[/cyan]  tracks saved from ytm-tui with [cyan]D[/cyan]
+  [cyan]Downloads[/cyan]  tracks saved from ytm-tui with [cyan]d[/cyan]
 
   [cyan]?[/cyan] help     [cyan]q[/cyan] quit
 
@@ -191,9 +190,8 @@ class YtmTui(App[None]):
         ("r", "repeat", "Repeat"),
         ("x", "stop", "Stop"),
         ("slash", "search", "Search"),
-        ("R", "radio", "Radio"),
         ("a", "append", "Queue"),
-        ("D", "download", "Download"),
+        ("d", "download", "Download"),
         ("f5,ctrl+r", "reload", "Reload"),
         ("t", "theme", "Theme"),
         ("question_mark", "help", "Help"),
@@ -810,32 +808,6 @@ class YtmTui(App[None]):
             self.call_from_thread(self.notify, f"Search failed: {exc}", severity="error")
             return
         self.call_from_thread(self._show_tracks, tracks, f"Search: {query}")
-
-    def action_radio(self) -> None:
-        table = self.query_one("#tracks", DataTable)
-        row = table.cursor_row
-        if not self.view_tracks or not (0 <= row < len(self.view_tracks)):
-            return
-        track = self.view_tracks[row]
-        if track.local_path:
-            self.notify("Radio isn't available for local files.", timeout=3)
-            return
-        self.query_one("#tracks-title", Static).update(
-            f"Radio: {track.title}  [dim]building…[/dim]"
-        )
-        self._radio_worker(track)
-
-    @work(thread=True, group="tracks", exclusive=True)
-    def _radio_worker(self, track: Track) -> None:
-        if self.library is None:
-            return
-        try:
-            tracks = self.library.radio(track.video_id)
-        except Exception as exc:
-            self.call_from_thread(self.notify, f"Radio failed: {exc}", severity="error")
-            return
-        self.call_from_thread(self._show_tracks, tracks, f"Radio: {track.title}")
-        self.call_from_thread(self._play_from_view, 0)
 
     def action_append(self) -> None:
         table = self.query_one("#tracks", DataTable)
