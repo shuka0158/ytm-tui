@@ -671,6 +671,7 @@ class YtmTui(App[None]):
         self.query_one("#np-artist", Static).update(f"[dim]{subtitle}[/dim]")
         self.playing_row = self._current_view_row()
         self._mark_playing_row()
+        self._follow_playing_row()
         self._load_art(track.thumb)
 
     @work(thread=True, group="art", exclusive=True)
@@ -705,6 +706,19 @@ class YtmTui(App[None]):
             if candidate.video_id == track.video_id:
                 return row
         return None
+
+    def _follow_playing_row(self) -> None:
+        """Keep the table's selection on whatever track is now playing.
+
+        Only does this while the visible list is the one that's actually
+        playing - if the user has browsed off to a different playlist, their
+        cursor there is left alone.
+        """
+        if self.playing_row is None:
+            return
+        table = self.query_one("#tracks", DataTable)
+        if 0 <= self.playing_row < table.row_count:
+            table.move_cursor(row=self.playing_row)
 
     def _mark_playing_row(self) -> None:
         table = self.query_one("#tracks", DataTable)
