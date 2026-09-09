@@ -38,7 +38,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 
-from . import config
+from . import art, config
 
 # googlevideo URLs are signed and time-limited; keep our own margin.
 FALLBACK_TTL = 3 * 3600
@@ -409,6 +409,7 @@ class Resolver:
         dest_dir: Path,
         filename_base: str,
         on_progress: Callable[[float | None, float | None], None] | None = None,
+        thumb_url: str = "",
     ) -> str:
         """Download the best audio for `video_id` into `dest_dir`. Returns the
         saved file's path.
@@ -420,6 +421,11 @@ class Resolver:
 
         `on_progress`, if given, is called from this same thread as
         (percent complete or None if unknown, bytes/sec or None).
+
+        `thumb_url`, if given, is fetched too and saved alongside the audio as
+        "<filename_base>.jpg" - so the Downloads section has cover art to show
+        without hitting the network again. Failure to fetch/save it never fails
+        the download itself.
         """
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -493,6 +499,15 @@ class Resolver:
         if not path:
             with yt_dlp.YoutubeDL({**self._opts, "outtmpl": outtmpl}) as ydl:
                 path = ydl.prepare_filename(info)
+
+        if thumb_url:
+            try:
+                cached = art.fetch(thumb_url)
+                if cached:
+                    shutil.copyfile(cached, dest_dir / f"{filename_base}.jpg")
+            except OSError:
+                pass
+
         return path
 
     def prefetch(self, video_id: str) -> None:

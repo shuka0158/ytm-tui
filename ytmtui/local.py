@@ -27,6 +27,9 @@ from .models import Track
 AUDIO_EXTENSIONS = {
     ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".webm",
 }
+# Cover art saved alongside a track (see resolver.download) as "<stem>.jpg";
+# checked in this order for whichever an audio file happens to sit next to.
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 _INVALID = re.compile(r'[\\/:*?"<>|]+')
 
@@ -35,6 +38,15 @@ def sanitize_filename(name: str) -> str:
     """Strip characters no filesystem likes, for a downloaded track's name."""
     name = _INVALID.sub("_", name).strip(" .")
     return name or "track"
+
+
+def _cover_for(path: Path) -> str:
+    """A same-named image file next to `path`, if there is one."""
+    for ext in IMAGE_EXTENSIONS:
+        candidate = path.with_suffix(ext)
+        if candidate.is_file():
+            return str(candidate)
+    return ""
 
 
 def scan(directories: list[Path]) -> list[Track]:
@@ -77,7 +89,7 @@ def scan(directories: list[Path]) -> list[Track]:
                     artist="Local file",
                     album=folder,
                     duration=0,
-                    thumb="",
+                    thumb=_cover_for(path),
                     local_path=key,
                 )
             )

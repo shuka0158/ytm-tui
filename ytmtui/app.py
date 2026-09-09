@@ -676,7 +676,13 @@ class YtmTui(App[None]):
 
     @work(thread=True, group="art", exclusive=True)
     def _load_art(self, url: str) -> None:
-        path = art.fetch(url)
+        # Local/Downloads tracks carry a cover art *path* (see local.py's
+        # scan), not a URL to fetch - use it directly instead of feeding it to
+        # requests, which would just fail.
+        if url and not url.startswith(("http://", "https://")):
+            path = url if Path(url).is_file() else None
+        else:
+            path = art.fetch(url)
         if path:
             self.call_from_thread(self._apply_art, path)
 
@@ -916,7 +922,9 @@ class YtmTui(App[None]):
             self.call_from_thread(self._set_download_progress, track.title, percent)
 
         try:
-            self.resolver.download(track.video_id, dest_dir, base, on_progress=on_progress)
+            self.resolver.download(
+                track.video_id, dest_dir, base, on_progress=on_progress, thumb_url=track.thumb
+            )
         except Exception as exc:
             self.call_from_thread(self._clear_download_progress, track.title)
             self.call_from_thread(
