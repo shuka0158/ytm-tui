@@ -3,7 +3,7 @@
 # [pls Don't forget to star this repo if you like it.]
 
 A terminal music player for **your own YouTube Music account**. Browse your
-playlists, liked songs and library, search, start radios, and play — all inside
+playlists, liked songs and library, search, download, and play — all inside
 your terminal, with real album art via the kitty graphics protocol.
 
 ![now playing](docs/screenshots/03-playing.png)
@@ -19,11 +19,15 @@ your terminal, with real album art via the kitty graphics protocol.
 - YouTube's own mixes — Supermix, My Mix, Discover, Replay — in the sidebar
 - Full-text search across YouTube Music, songs and videos alike
 - Blocked track? It finds another upload of the same song and plays that
-- Start a radio from any track
-- Gapless streaming — nothing is downloaded to disk, audio is piped into `mpv`
+- Download a track with cover art, and browse your own local music folders,
+  both from dedicated **Local** and **Downloads** sections in the sidebar
+- Gapless streaming — nothing is downloaded to disk during normal playback,
+  audio is piped into `mpv`
 - Real album art in the terminal (kitty graphics protocol; unicode-block fallback
-  elsewhere)
-- Queue, shuffle, repeat, seek, volume — remembered between runs
+  elsewhere), including for downloaded/local tracks
+- Queue, random order, repeat, seek, volume, playback speed — remembered
+  between runs
+- Track selection follows whatever is currently playing
 - Sixteen themes — Tokyo Night, Gruvbox, Catppuccin, Nord, Dracula, two
   high-contrast ones and your terminal's own ANSI palette
 
@@ -137,19 +141,32 @@ steps above.
 | `n` / `p` | next / previous track |
 | `←` / `→` | seek 5s (`shift` for 30s) |
 | `+` / `-` | volume |
-| `s` | shuffle |
+| `s` | random order |
 | `r` | repeat: off → all → one |
+| `v` | playback speed: 1.0x → 1.25x → 1.5x → 1.75x → 2x → 0.75x |
 | `x` | stop |
 | `/` | search YouTube Music |
-| `R` | start a radio from the highlighted track |
 | `a` | append the highlighted track to the queue |
-| `F5` | reload playlists |
+| `d` | download the highlighted track (asks for a folder, saves cover art too) |
+| `F5` / `ctrl+r` | reload playlists |
 | `t` | theme picker |
 | `tab` | move between panes |
 | `?` | help |
 | `q` | quit |
 
-Volume, shuffle, repeat and the theme are remembered in `config/settings.json`.
+Volume, random order, repeat, speed and the theme are remembered in
+`config/settings.json`.
+
+### Local and Downloads
+
+Two sections sit in the sidebar alongside your playlists:
+
+- **Downloads** — tracks you've saved with `d`, including their cover art,
+  ready to play with no network round-trip.
+- **Local** — your own audio files. It starts empty; use the **Import
+  Folder…** button (visible while Local is open) to add a folder — `~/Music`,
+  a mounted NAS share, anywhere — and it's scanned for playable tracks.
+  Imported folders are remembered between runs.
 
 ### Themes
 
