@@ -24,7 +24,7 @@ from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -41,7 +41,7 @@ from textual.widgets import (
 from textual.worker import Worker, get_current_worker
 from textual_image.widget import Image
 
-from . import art, config, cookies, local, themes
+from . import art, config, cookies, local, lyrics, themes
 from .api import AuthMissing, Library
 from .models import Playlist, Track, fmt_duration
 from .player import MpvPlayer
@@ -134,6 +134,7 @@ class HelpScreen(ModalScreen[None]):
   [cyan]/[/cyan]          search YouTube Music
   [cyan]a[/cyan]          append highlighted track to the queue
   [cyan]d[/cyan]          download highlighted track (asks for a folder)
+  [cyan]l[/cyan]          lyrics for the track that's playing (via Genius)
   [cyan]F5[/cyan]         reload playlists
   [cyan]t[/cyan]          theme picker
   [cyan]tab[/cyan]        move between panes
@@ -195,6 +196,29 @@ class ThemeScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class LyricsScreen(ModalScreen[None]):
+    """Lyrics for the current track, scraped from Genius, in a ~70% popup."""
+
+    BINDINGS = [("escape,q,l", "cancel", "Close")]
+
+    def __init__(self, heading: str) -> None:
+        super().__init__()
+        self.heading = heading
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="lyrics-box"):
+            yield Static(self.heading, id="lyrics-heading")
+            with VerticalScroll(id="lyrics-scroll"):
+                yield Static("", id="lyrics-body")
+
+    def set_text(self, heading: str, text: str) -> None:
+        self.query_one("#lyrics-heading", Static).update(heading)
+        self.query_one("#lyrics-body", Static).update(text)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class YtmTui(App[None]):
     CSS_PATH = "theme.tcss"
     TITLE = "ytm-tui"
@@ -217,6 +241,7 @@ class YtmTui(App[None]):
         ("slash", "search", "Search"),
         ("a", "append", "Queue"),
         ("d", "download", "Download"),
+        ("l", "lyrics", "Lyrics"),
         ("f5,ctrl+r", "reload", "Reload"),
         ("t", "theme", "Theme"),
         ("question_mark", "help", "Help"),
@@ -953,6 +978,36 @@ class YtmTui(App[None]):
         )
         if self.view_title == "Downloads" and dest_dir.resolve() == config.DOWNLOADS_DIR.resolve():
             self.call_from_thread(self._scan_downloads_worker)
+
+    def action_lyrics(self) -> None:
+        track = self.queue.current()
+        if track is None:
+            self.notify("Nothing playing.", timeout=3)
+            return
+        screen = LyricsScreen(f"[b]{track.title}[/b]  [dim]{track.artist}[/dim]")
+        self.push_screen(screen)
+        self._lyrics_worker(track.artist, track.title, screen)
+
+    @work(thread=True, group="lyrics", exclusive=True)
+    def _lyrics_worker(self, artist: str, title: str, screen: LyricsScreen) -> None:
+        worker = get_current_worker()
+        try:
+            text, display = lyrics.fetch(artist, title)
+        except lyrics.LyricsError as exc:
+            if worker.is_cancelled or not screen.is_attached:
+                return
+            self.call_from_thread(screen.set_text, f"[b]{title}[/b]", f"[dim]{exc}[/dim]")
+            return
+        except Exception as exc:
+            if worker.is_cancelled or not screen.is_attached:
+                return
+            self.call_from_thread(
+                screen.set_text, f"[b]{title}[/b]", f"[dim]Lyrics lookup failed: {exc}[/dim]"
+            )
+            return
+        if worker.is_cancelled or not screen.is_attached:
+            return
+        self.call_from_thread(screen.set_text, f"[b]{display}[/b]", text)
 
     def _set_download_progress(self, title: str, percent: float | None) -> None:
         self._downloads[title] = percent

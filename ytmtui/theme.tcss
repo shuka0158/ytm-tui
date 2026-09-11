@@ -176,3 +176,34 @@ ThemeScreen {
 #theme-list > ListItem.--highlight {
     background: $accent-darken-2;
 }
+
+LyricsScreen {
+    align: center middle;
+    background: $surface 70%;
+}
+
+#lyrics-box {
+    width: 70%;
+    height: 70%;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+}
+
+#lyrics-heading {
+    height: auto;
+    color: $accent;
+    padding-bottom: 1;
+    border-bottom: solid $primary-darken-2;
+}
+
+#lyrics-scroll {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+    margin-top: 1;
+}
+
+#lyrics-body {
+    width: 1fr;
+    height: auto;
+}

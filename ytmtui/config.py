@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 CACHE_DIR = ROOT / "cache"
 ART_DIR = CACHE_DIR / "art"
+LYRICS_DIR = CACHE_DIR / "lyrics"
 YTDLP_CACHE = CACHE_DIR / "ytdlp"
 SUBPROCESS_LOG = CACHE_DIR / "subprocess.log"
 # Where the "D" download-track action saves audio. Shown in the UI as its own
@@ -87,7 +88,7 @@ def parse_cookies_from_browser(spec: str) -> tuple[str, str | None, str | None, 
 
 
 def ensure_dirs() -> None:
-    for d in (CONFIG_DIR, CACHE_DIR, ART_DIR, YTDLP_CACHE, DOWNLOADS_DIR):
+    for d in (CONFIG_DIR, CACHE_DIR, ART_DIR, LYRICS_DIR, YTDLP_CACHE, DOWNLOADS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
