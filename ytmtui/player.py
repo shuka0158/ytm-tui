@@ -249,3 +249,8 @@ class MpvPlayer:
         volume = max(0, min(130, volume))
         self._send(["set_property", "volume", volume], wait=False)
         return volume
+
+    def set_speed(self, speed: float) -> float:
+        speed = max(0.25, min(3.0, speed))
+        self._send(["set_property", "speed", speed], wait=False)
+        return speed

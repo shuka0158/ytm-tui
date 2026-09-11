@@ -41,7 +41,8 @@ COOKIES_FILE = CONFIG_DIR / "cookies.txt"
 
 DEFAULTS: dict[str, Any] = {
     "volume": 80,
-    "shuffle": False,
+    "speed": 1.0,
+    "random": False,
     "repeat": "off",          # off | all | one
     "last_playlist": None,
     "theme": "tokyo-night",    # see ytmtui/themes.py for the full list

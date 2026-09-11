@@ -15,7 +15,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Playback queue: play order, shuffle and repeat."""
+"""Playback queue: play order, random and repeat."""
 from __future__ import annotations
 
 import random
@@ -30,7 +30,7 @@ class PlayQueue:
         self.tracks: list[Track] = []
         self.order: list[int] = []
         self.pos: int = -1
-        self.shuffle: bool = False
+        self.random: bool = False
         self.repeat: str = "off"
         self.source: str = ""
 
@@ -47,15 +47,15 @@ class PlayQueue:
 
     def _rebuild_order(self, keep: int | None = None) -> None:
         self.order = list(range(len(self.tracks)))
-        if self.shuffle and self.order:
+        if self.random and self.order:
             random.shuffle(self.order)
             if keep is not None and keep in self.order:
                 self.order.remove(keep)
                 self.order.insert(0, keep)
 
-    def set_shuffle(self, enabled: bool) -> None:
+    def set_random(self, enabled: bool) -> None:
         current = self.current_index()
-        self.shuffle = enabled
+        self.random = enabled
         self._rebuild_order(keep=current)
         if current is not None and current in self.order:
             self.pos = self.order.index(current)

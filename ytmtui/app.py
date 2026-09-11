@@ -49,6 +49,7 @@ from .queue import PlayQueue
 from .resolver import JS_RUNTIME_HINT, Resolver, TrackBlocked, missing_js_runtime
 
 BAR_WIDTH = 44
+SPEED_PRESETS = (1.0, 1.25, 1.5, 1.75, 2.0, 0.75)
 
 
 class SearchScreen(ModalScreen[str | None]):
@@ -125,7 +126,8 @@ class HelpScreen(ModalScreen[None]):
   [cyan]n[/cyan] / [cyan]p[/cyan]      next / previous track
   [cyan]←[/cyan] / [cyan]→[/cyan]      seek 5s      [cyan]shift+←/→[/cyan] seek 30s
   [cyan]+[/cyan] / [cyan]-[/cyan]      volume
-  [cyan]s[/cyan]          shuffle       [cyan]r[/cyan]  repeat off/all/one
+  [cyan]s[/cyan]          random        [cyan]r[/cyan]  repeat off/all/one
+  [cyan]v[/cyan]          speed 1.0x/1.25x/1.5x/1.75x/2x/0.75x
   [cyan]x[/cyan]          stop
 
 [b]Library[/b]
@@ -208,8 +210,9 @@ class YtmTui(App[None]):
         ("shift+left", "seek_back_big", ""),
         ("plus,equals_sign", "volume_up", "Vol+"),
         ("minus", "volume_down", "Vol−"),
-        ("s", "shuffle", "Shuffle"),
+        ("s", "random", "Random"),
         ("r", "repeat", "Repeat"),
+        ("v", "speed", "Speed"),
         ("x", "stop", "Stop"),
         ("slash", "search", "Search"),
         ("a", "append", "Queue"),
@@ -232,9 +235,10 @@ class YtmTui(App[None]):
             cookies_file=cookie_file,
         )
         self.queue = PlayQueue()
-        self.queue.shuffle = bool(self.settings.get("shuffle", False))
+        self.queue.random = bool(self.settings.get("random", False))
         self.queue.repeat = self.settings.get("repeat", "off")
         self.volume = int(self.settings.get("volume", 80))
+        self.speed = float(self.settings.get("speed", 1.0))
         self.playlists: list[Playlist] = []
         # Parallel to the "#playlists" ListView's children: what each row opens.
         # ("local", None) | ("downloads", None) | ("playlist", Playlist)
@@ -302,6 +306,7 @@ class YtmTui(App[None]):
 
         try:
             self.player.start(volume=self.volume)
+            self.player.set_speed(self.speed)
         except Exception as exc:
             self.notify(f"mpv failed to start: {exc}", severity="error", timeout=12)
 
@@ -320,7 +325,8 @@ class YtmTui(App[None]):
     def on_unmount(self) -> None:
         self.settings.update(
             volume=self.volume,
-            shuffle=self.queue.shuffle,
+            speed=self.speed,
+            random=self.queue.random,
             repeat=self.queue.repeat,
             theme=self.theme,
         )
@@ -779,7 +785,8 @@ class YtmTui(App[None]):
         bits = [
             state,
             f"vol {self.volume}%",
-            f"shuffle {'on' if self.queue.shuffle else 'off'}",
+            f"speed {self.speed:g}x",
+            f"random {'on' if self.queue.random else 'off'}",
             f"repeat {self.queue.repeat}",
         ]
         if self.queue.tracks:
@@ -823,12 +830,18 @@ class YtmTui(App[None]):
     def action_volume_down(self) -> None:
         self.volume = self.player.set_volume(self.volume - 5)
 
-    def action_shuffle(self) -> None:
-        self.queue.set_shuffle(not self.queue.shuffle)
-        self.notify(f"Shuffle {'on' if self.queue.shuffle else 'off'}", timeout=2)
+    def action_random(self) -> None:
+        self.queue.set_random(not self.queue.random)
+        self.notify(f"Random {'on' if self.queue.random else 'off'}", timeout=2)
 
     def action_repeat(self) -> None:
         self.notify(f"Repeat {self.queue.cycle_repeat()}", timeout=2)
+
+    def action_speed(self) -> None:
+        idx = SPEED_PRESETS.index(self.speed) if self.speed in SPEED_PRESETS else 0
+        self.speed = SPEED_PRESETS[(idx + 1) % len(SPEED_PRESETS)]
+        self.player.set_speed(self.speed)
+        self.notify(f"Speed {self.speed:g}x", timeout=2)
 
     def action_stop(self) -> None:
         self.player.stop()
