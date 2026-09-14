@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" width="160" alt="ytm-tui logo" />
+</p>
+
 # ytm-tui
 
 # [pls Don't forget to star this repo if you like it.]
