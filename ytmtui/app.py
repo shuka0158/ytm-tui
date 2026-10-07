@@ -97,6 +97,56 @@ class DownloadScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class NewPlaylistScreen(ModalScreen[str | None]):
+    """Asks for the name of a playlist to create."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="search-box"):
+            yield Label("New playlist name")
+            yield Input(placeholder="My playlist", id="search-input")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class PlaylistPickScreen(ModalScreen["Playlist | str | None"]):
+    """Choose a playlist to add to. Dismisses with a Playlist, "new", or None."""
+
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
+
+    def __init__(self, track_title: str, playlists: list[Playlist]) -> None:
+        super().__init__()
+        self.track_title = track_title
+        self.choices = playlists
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="theme-box"):
+            yield Label(f"Add “{self.track_title}” to…")
+            yield ListView(
+                ListItem(Label("[b]＋ New playlist…[/b]")),
+                *(ListItem(Label(p.title)) for p in self.choices),
+                id="theme-list",
+            )
+            yield Static("[dim]↑↓ choose   enter select   esc cancel[/dim]")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        index = event.list_view.index
+        if index is None:
+            return
+        self.dismiss("new" if index == 0 else self.choices[index - 1])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class ImportFolderScreen(ModalScreen[str | None]):
     """Asks for a folder path to add to the Local section."""
 
@@ -133,6 +183,7 @@ class HelpScreen(ModalScreen[None]):
 [b]Library[/b]
   [cyan]/[/cyan]          search YouTube Music
   [cyan]a[/cyan]          append highlighted track to the queue
+  [cyan]A[/cyan]          add highlighted track to a playlist (or create one)
   [cyan]d[/cyan]          download highlighted track (asks for a folder)
   [cyan]l[/cyan]          lyrics for the track that's playing (via Genius)
   [cyan]F5[/cyan]         reload playlists
@@ -241,6 +292,7 @@ class YtmTui(App[None]):
         ("slash", "search", "Search"),
         ("a", "append", "Queue"),
         ("d", "download", "Download"),
+        ("A", "add_to_playlist", "+Playlist"),
         ("l", "lyrics", "Lyrics"),
         ("f5,ctrl+r", "reload", "Reload"),
         ("t", "theme", "Theme"),
@@ -923,6 +975,51 @@ class YtmTui(App[None]):
         track = self.view_tracks[row]
         self.queue.append(track)
         self.notify(f"Queued: {track.title}", timeout=2)
+
+    def action_add_to_playlist(self) -> None:
+        table = self.query_one("#tracks", DataTable)
+        row = table.cursor_row
+        if not self.view_tracks or not (0 <= row < len(self.view_tracks)):
+            return
+        track = self.view_tracks[row]
+        if track.local_path or self.library is None:
+            self.notify("Only YouTube Music tracks can be added to playlists.", timeout=3)
+            return
+        owned = [p for p in self.playlists if p.kind == "playlist"]
+
+        def chosen(choice: "Playlist | str | None") -> None:
+            if choice == "new":
+                self.push_screen(
+                    NewPlaylistScreen(),
+                    callback=lambda name: name and self._playlist_worker(track, None, name),
+                )
+            elif choice is not None:
+                self._playlist_worker(track, choice, "")
+
+        self.push_screen(PlaylistPickScreen(track.title, owned), callback=chosen)
+
+    @work(thread=True, group="playlist")
+    def _playlist_worker(self, track: Track, playlist: Playlist | None, name: str) -> None:
+        try:
+            if playlist is None:
+                pid = self.library.yt.create_playlist(
+                    name, "Created from ytm-tui", video_ids=[track.video_id]
+                )
+                if not isinstance(pid, str):
+                    raise RuntimeError(str(pid))
+                msg = f"Created “{name}” with “{track.title}”."
+            else:
+                self.library.yt.add_playlist_items(playlist.id, [track.video_id])
+                playlist.loaded = False  # refetch next time it's opened
+                msg = f"Added “{track.title}” to {playlist.title}."
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify, f"Add to playlist failed: {exc}", severity="error", timeout=8
+            )
+            return
+        self.call_from_thread(self.notify, msg, timeout=4)
+        if playlist is None:
+            self.call_from_thread(self.action_reload)
 
     def action_download(self) -> None:
         table = self.query_one("#tracks", DataTable)
