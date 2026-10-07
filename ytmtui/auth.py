@@ -19,7 +19,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import signal
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 from ytmusicapi import setup as setup_browser_headers
 from ytmusicapi import setup_oauth
@@ -97,6 +103,120 @@ def setup_browser() -> int:
     return 0
 
 
+CHROME_BINARIES = ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
+CHROME_PROFILE = Path.home() / ".local/share/ytm-tui/chrome-profile"
+LOGIN_TIMEOUT = 600
+
+
+def _read_profile_cookies() -> dict[str, str]:
+    """youtube.com cookies from the private sign-in profile, {} while unreadable."""
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    try:
+        jar = extract_cookies_from_browser(
+            "chrome", profile=str(CHROME_PROFILE), keyring="BASICTEXT"
+        )
+    except Exception:
+        return {}
+    return {c.name: c.value for c in jar if "youtube.com" in (c.domain or "") and c.value}
+
+
+def _profile_pids() -> list[int]:
+    """Chrome processes running on our private profile, whoever launched them."""
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", "--", f"--user-data-dir={CHROME_PROFILE}"],
+            capture_output=True, text=True,
+        ).stdout
+    except OSError:
+        return []
+    return [int(x) for x in out.split()]
+
+
+def _profile_in_use() -> bool:
+    return bool(_profile_pids())
+
+
+def _close_profile_chrome(proc: subprocess.Popen) -> None:
+    """Close only our private-profile Chrome; closing keeps the Google session alive."""
+    if proc.poll() is None:
+        proc.terminate()
+    for pid in _profile_pids():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def setup_auto() -> int:
+    """Open Chrome on the Google sign-in page and capture the session by itself."""
+    config.ensure_dirs()
+    print("\n=== Sign in with Chrome ===")
+    binary = next((b for b in map(shutil.which, CHROME_BINARIES) if b), None)
+    if not binary:
+        print("Chrome/Chromium was not found on your PATH. Use the header-paste method.")
+        return 1
+
+    CHROME_PROFILE.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        [
+            binary,
+            f"--user-data-dir={CHROME_PROFILE}",
+            "--password-store=basic",
+            "--no-first-run",
+            "--no-default-browser-check",
+            cookies.LOGIN_URL,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    print("A Chrome window opened. Sign in to your Google account there.")
+    print("This window finishes by itself once you are signed in. (Ctrl-C to abort)")
+
+    jar: dict[str, str] = {}
+    deadline = time.time() + LOGIN_TIMEOUT
+    grace = 5  # polls left after the launcher exits: it may only have forwarded to a running Chrome
+    try:
+        while time.time() < deadline:
+            time.sleep(2)
+            jar = _read_profile_cookies()
+            if "SAPISID" in jar and "LOGIN_INFO" in jar:
+                break
+            if proc.poll() is not None:
+                grace -= 1
+                if grace <= 0 and not _profile_in_use():
+                    print("\nThe Chrome window was closed before sign-in finished. Run setup again.")
+                    return 1
+        else:
+            print("\nTimed out waiting for sign-in.")
+            return 1
+    except KeyboardInterrupt:
+        print("\nAborted.")
+        return 1
+    finally:
+        _close_profile_chrome(proc)
+
+    raw = "\n".join(
+        (
+            "cookie: " + "; ".join(f"{k}={v}" for k, v in jar.items()),
+            "x-goog-authuser: 0",
+            "authorization: SAPISIDHASH placeholder",
+            "x-origin: https://music.youtube.com",
+        )
+    )
+    try:
+        setup_browser_headers(filepath=str(config.BROWSER_AUTH), headers_raw=raw)
+    except Exception as exc:
+        print(f"\nSetup failed: {exc}")
+        return 1
+    if config.OAUTH_AUTH.exists():
+        config.OAUTH_AUTH.unlink()
+    cookies.sync_from_auth(force=True)
+    print(f"\nSigned in. Saved credentials to {config.BROWSER_AUTH}")
+    return 0
+
+
 def setup_oauth_flow() -> int:
     config.ensure_dirs()
     print("\n=== OAuth sign-in ===")
@@ -147,12 +267,15 @@ def verify() -> int:
 
 def wizard() -> int:
     print("How do you want to connect your YouTube account?\n")
-    print("  1) Browser headers  - the only method that works (recommended)")
-    print("  2) OAuth            - BROKEN: Google 400s device-OAuth on every call. Don't.")
+    print("  1) Sign in with Chrome - opens a login window, fully automatic (recommended)")
+    print("  2) Browser headers     - paste request headers from DevTools")
+    print("  3) OAuth               - BROKEN: Google 400s device-OAuth on every call. Don't.")
     choice = input("\nChoice [1]: ").strip() or "1"
     if choice == "1":
-        code = setup_browser()
+        code = setup_auto()
     elif choice == "2":
+        code = setup_browser()
+    elif choice == "3":
         code = setup_oauth_flow()
     else:
         print("Unknown choice.")

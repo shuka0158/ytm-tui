@@ -32,7 +32,7 @@ There is NO WARRANTY, to the extent permitted by law."""
 USAGE = f"""ytm - YouTube Music in the terminal
 
   ytm             start the player
-  ytm setup       connect a Google account
+  ytm setup       connect a Google account (opens Chrome to sign in)
   ytm cookies     inspect or override the session used for gated tracks
   ytm doctor      check everything playback depends on
   ytm verify      check the stored credentials

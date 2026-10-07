@@ -88,7 +88,15 @@ the steps explicitly:
 ./ytm logout    # delete the stored credentials
 ```
 
-### Sign in with browser headers
+### Sign in with Chrome (automatic)
+
+`./ytm setup` (or the first launch, when nothing is stored) offers **1) Sign in
+with Chrome**. It opens a Chrome window on the Google sign-in page using a private
+profile in `~/.local/share/ytm-tui/chrome-profile`; sign in normally (password,
+2FA and all) and the app captures the session itself and closes the window. Don't
+click "sign out" in that window. Needs Chrome or Chromium on your `PATH`.
+
+### Sign in with browser headers (manual)
 
 This app signs in by reusing your browser's YouTube Music session. It does **not**
 ask for your password, and nothing is sent anywhere except YouTube's own API.
