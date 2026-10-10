@@ -122,7 +122,7 @@ Screen {
     margin-top: 1;
 }
 
-SearchScreen, DownloadScreen {
+SearchScreen, DownloadScreen, NewPlaylistScreen, ImportFolderScreen {
     align: center middle;
     background: $surface 60%;
 }
@@ -148,7 +148,7 @@ HelpScreen {
     border: round $accent;
 }
 
-ThemeScreen {
+ThemeScreen, PlaylistPickScreen {
     align: center middle;
     background: $surface 70%;
 }
