@@ -103,6 +103,20 @@ Screen {
     padding-top: 1;
 }
 
+#disc {
+    width: 12;
+    height: 8;
+    content-align: center bottom;
+    dock: right;
+}
+
+#viz {
+    width: 24;
+    height: 8;
+    content-align: center bottom;
+    dock: right;
+}
+
 #np-title {
     height: 1;
     color: $text;

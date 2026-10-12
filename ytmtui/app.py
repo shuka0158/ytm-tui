@@ -42,6 +42,7 @@ from textual.worker import Worker, get_current_worker
 from textual_image.widget import Image
 
 from . import art, config, cookies, local, lyrics, themes
+from .disc import Disc, Visualizer
 from .api import AuthMissing, Library
 from .models import Playlist, Track, fmt_duration
 from .player import MpvPlayer
@@ -357,6 +358,8 @@ class YtmTui(App[None]):
                 yield Static("", id="np-artist")
                 yield Static("", id="np-bar")
                 yield Static("", id="np-status")
+            yield Disc(id="disc")
+            yield Visualizer(id="viz")
         # The palette's own footer button clashes with the key hints; ctrl+p
         # still opens it.
         yield Footer(show_command_palette=False)
@@ -869,6 +872,13 @@ class YtmTui(App[None]):
         if self.queue.tracks:
             bits.append(f"{self.queue.pos + 1}/{len(self.queue.order)}  {self.queue.source}")
         self.query_one("#np-status", Static).update("[dim]" + "   ·   ".join(bits) + "[/dim]")
+
+        disc = self.query_one("#disc", Disc)
+        disc.display = track is not None
+        disc.spin(state == "playing")
+        viz = self.query_one("#viz", Visualizer)
+        viz.display = track is not None
+        viz.spin(state == "playing")
 
     # -- actions -----------------------------------------------------------
     def action_play_pause(self) -> None:

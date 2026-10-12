@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
 import socket
 import subprocess
@@ -36,6 +37,27 @@ from typing import Any, Callable
 
 class MpvError(RuntimeError):
     pass
+
+
+# Centre frequencies (Hz) of the visualizer bands, roughly log-spaced.
+BANDS = (60, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000)
+_RMS_KEY = "lavfi.astats.Overall.RMS_level"
+
+
+def _band_graph(paths: list[str]) -> str:
+    """lavfi-complex graph: pass the audio through untouched and also feed a
+    copy through one band-pass + level meter per band, each printing its RMS to
+    its own FIFO. Measured before the volume, so the bars ignore the volume."""
+    n = len(paths)
+    outs = "".join(f"[b{i}]" for i in range(n))
+    parts = [f"[aid1]asplit={n + 1}[ao]{outs}"]
+    for i, (hz, path) in enumerate(zip(BANDS, paths)):
+        parts.append(
+            f"[b{i}]bandpass=f={hz}:width_type=o:w=1,asetnsamples=n=1024,"
+            f"astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level,"
+            f"ametadata=print:key={_RMS_KEY}:file={path}:direct=1,anullsink"
+        )
+    return ";".join(parts)
 
 
 class MpvPlayer:
@@ -62,6 +84,15 @@ class MpvPlayer:
         self.idle: bool = True
         self.loading: bool = False
 
+        # Audio levels for the visualizer: RMS in dB per frequency band, taken
+        # from the same stream mpv is playing (see _band_graph). `analysis` is
+        # False if this mpv could not run the analysis graph.
+        self.analysis: bool = False
+        self.levels: list[float] = [-90.0] * len(BANDS)
+        self.levels_at: float = 0.0
+        self._fifos: list[str] = []
+        self._fifo_fds: list[tuple[int, int]] = []
+
     # -- lifecycle ---------------------------------------------------------
     def start(self, volume: int = 80) -> None:
         if shutil.which("mpv") is None:
@@ -70,8 +101,31 @@ class MpvPlayer:
         if os.path.exists(self._path):
             os.unlink(self._path)
 
+        self._open_fifos()
+        args = self._mpv_args(volume, analysis=True)
         self._proc = subprocess.Popen(
-            [
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        # An mpv build without the analysis filters dies at once; retry plain.
+        time.sleep(0.4)
+        if self._proc.poll() is not None:
+            self._close_fifos()
+            self._proc = subprocess.Popen(
+                self._mpv_args(volume, analysis=False),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            self.analysis = True
+            threading.Thread(target=self._level_loop, daemon=True).start()
+        self._connect()
+
+    def _mpv_args(self, volume: int, analysis: bool) -> list[str]:
+        args = [
                 "mpv",
                 "--idle=yes",
                 "--no-video",
@@ -84,12 +138,12 @@ class MpvPlayer:
                 "--demuxer-readahead-secs=30",
                 f"--volume={volume}",
                 f"--input-ipc-server={self._path}",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-        )
+        ]
+        if analysis:
+            args.append(f"--lavfi-complex={_band_graph(self._fifos)}")
+        return args
 
+    def _connect(self) -> None:
         deadline = time.time() + 10
         while time.time() < deadline:
             if self._proc.poll() is not None:
@@ -115,6 +169,61 @@ class MpvPlayer:
         ):
             self._send(["observe_property", pid, name], wait=False)
 
+    # -- level analysis ----------------------------------------------------
+    def _open_fifos(self) -> None:
+        self._fifos = []
+        self._fifo_fds = []
+        try:
+            for i in range(len(BANDS)):
+                path = os.path.join(tempfile.gettempdir(), f"ytmtui-mpv-{os.getpid()}-b{i}")
+                if os.path.exists(path):
+                    os.unlink(path)
+                os.mkfifo(path)
+                self._fifos.append(path)
+                # Hold both ends: the read end is ours, and keeping a write end
+                # open stops the reader seeing EOF before mpv connects.
+                rfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                wfd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+                self._fifo_fds.append((rfd, wfd))
+        except OSError:
+            self._close_fifos()
+            raise MpvError("could not create the level-meter pipes")
+
+    def _close_fifos(self) -> None:
+        for rfd, wfd in self._fifo_fds:
+            for fd in (rfd, wfd):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        for path in self._fifos:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self._fifos, self._fifo_fds = [], []
+
+    def _level_loop(self) -> None:
+        fds = {rfd: i for i, (rfd, _) in enumerate(self._fifo_fds)}
+        while not self._closing:
+            try:
+                ready, _, _ = select.select(list(fds), [], [], 0.25)
+            except (OSError, ValueError):
+                return
+            for fd in ready:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    continue
+                for line in data.decode(errors="ignore").splitlines():
+                    if line.startswith(_RMS_KEY + "="):
+                        try:
+                            db = float(line.split("=", 1)[1])
+                        except ValueError:
+                            db = -90.0
+                        self.levels[fds[fd]] = max(-90.0, db)
+                        self.levels_at = time.monotonic()
+
     def close(self) -> None:
         self._closing = True
         try:
@@ -136,6 +245,7 @@ class MpvPlayer:
                 os.unlink(self._path)
             except OSError:
                 pass
+        self._close_fifos()
 
     # -- IPC plumbing ------------------------------------------------------
     def _send(self, command: list[Any], wait: bool = True, timeout: float = 5.0) -> Any:
