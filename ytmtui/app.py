@@ -83,7 +83,7 @@ class DownloadScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="search-box"):
-            yield Label(f"Download “{self.track_title}” to…")
+            yield Label(f'Download "{self.track_title}" to…')
             yield Input(value=self.default_dir, id="search-input")
 
     def on_mount(self) -> None:
@@ -130,7 +130,7 @@ class PlaylistPickScreen(ModalScreen["Playlist | str | None"]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="theme-box"):
-            yield Label(f"Add “{self.track_title}” to…")
+            yield Label(f'Add "{self.track_title}" to…')
             yield ListView(
                 ListItem(Label("[b]＋ New playlist…[/b]")),
                 *(ListItem(Label(p.title)) for p in self.choices),
@@ -657,21 +657,21 @@ class YtmTui(App[None]):
             swap = self._resolve_alternate(track, worker)
             if swap is None:
                 self.call_from_thread(
-                    self.notify, f"Cannot play “{track.title}”: {exc}", severity="error"
+                    self.notify, f'Cannot play "{track.title}": {exc}', severity="error"
                 )
                 self.call_from_thread(self._skip_after_failure)
                 return
             alternate, url, headers = swap
             self.call_from_thread(
                 self.notify,
-                f"“{track.title}” is blocked - playing another upload: "
-                f"“{alternate.title}”",
+                f'"{track.title}" is blocked - playing another upload: '
+                f'"{alternate.title}"',
                 severity="warning",
                 timeout=8,
             )
         except Exception as exc:
             self.call_from_thread(
-                self.notify, f"Cannot play “{track.title}”: {exc}", severity="error"
+                self.notify, f'Cannot play "{track.title}": {exc}', severity="error"
             )
             self.call_from_thread(self._skip_after_failure)
             return
@@ -995,7 +995,7 @@ class YtmTui(App[None]):
         if track.local_path or self.library is None:
             self.notify("Only YouTube Music tracks can be added to playlists.", timeout=3)
             return
-        owned = [p for p in self.playlists if p.kind == "playlist"]
+        owned = [p for p in self.playlists if p.kind in ("playlist", "mix")]
 
         def chosen(choice: "Playlist | str | None") -> None:
             if choice == "new":
@@ -1017,11 +1017,11 @@ class YtmTui(App[None]):
                 )
                 if not isinstance(pid, str):
                     raise RuntimeError(str(pid))
-                msg = f"Created “{name}” with “{track.title}”."
+                msg = f'Created "{name}" with "{track.title}".'
             else:
                 self.library.yt.add_playlist_items(playlist.id, [track.video_id])
                 playlist.loaded = False  # refetch next time it's opened
-                msg = f"Added “{track.title}” to {playlist.title}."
+                msg = f'Added "{track.title}" to {playlist.title}.'
         except Exception as exc:
             self.call_from_thread(
                 self.notify, f"Add to playlist failed: {exc}", severity="error", timeout=8
@@ -1074,14 +1074,14 @@ class YtmTui(App[None]):
             self.call_from_thread(self._clear_download_progress, track.title)
             self.call_from_thread(
                 self.notify,
-                f"Download failed for “{track.title}”: {exc}",
+                f'Download failed for "{track.title}": {exc}',
                 severity="error",
                 timeout=10,
             )
             return
         self.call_from_thread(self._clear_download_progress, track.title)
         self.call_from_thread(
-            self.notify, f"Saved “{track.title}” to {dest_dir}.", timeout=5
+            self.notify, f'Saved "{track.title}" to {dest_dir}.', timeout=5
         )
         if self.view_title == "Downloads" and dest_dir.resolve() == config.DOWNLOADS_DIR.resolve():
             self.call_from_thread(self._scan_downloads_worker)

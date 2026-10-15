@@ -129,7 +129,7 @@ class Visualizer(Static):
 
     BARS = 12
     LEVELS = " ▁▂▃▄▅▆▇█"
-    FLOOR_DB, CEIL_DB = -62.0, -14.0
+    FLOOR_DB, CEIL_DB = -60.0, 0.0
     STALE = 0.25  # seconds without new levels = silence (paused, stopped)
 
     def __init__(self, **kwargs) -> None:
@@ -151,8 +151,9 @@ class Visualizer(Static):
                 return [0.0] * self.BARS
             out = []
             for i, db in enumerate(player.levels[: self.BARS]):
-                db += i * 1.2  # highs carry less energy; even the bars out
-                out.append(max(0.0, min(1.0, (db - self.FLOOR_DB) / (self.CEIL_DB - self.FLOOR_DB))))
+                db += i * 0.6  # highs carry less energy; even the bars out
+                x = max(0.0, min(1.0, (db - self.FLOOR_DB) / (self.CEIL_DB - self.FLOOR_DB)))
+                out.append(x ** 1.6)  # curve keeps loud songs from pinning the bars
             return out
         if not self._playing:
             return [0.0] * self.BARS

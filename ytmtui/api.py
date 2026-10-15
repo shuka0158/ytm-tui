@@ -153,6 +153,7 @@ class Library:
                     title=item.get("title") or "Untitled",
                     subtitle=f"{count} tracks" if count else "",
                     thumb=thumbs[-1].get("url", "") if thumbs else "",
+                    kind="playlist",
                 )
             )
         return out
