@@ -1,0 +1,38 @@
+Source: ytm-tui
+Maintainer: shuka0158 <shukakidze.davit2010@gmail.com>
+Section: sound
+Priority: optional
+Standards-Version: 4.6.2
+Homepage: https://github.com/shuka0158/ytm-tui
+Vcs-Git: https://github.com/shuka0158/ytm-tui.git
+Vcs-Browser: https://github.com/shuka0158/ytm-tui
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3-all,
+ python3-setuptools,
+ python3-wheel,
+ python3-build
+
+Package: ytm-tui
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ python3,
+ mpv,
+ ffmpeg
+Description: Terminal music player for YouTube Music
+ A feature-rich terminal UI for streaming and managing your YouTube Music
+ library. Browse playlists, search songs, download tracks, and play music
+ directly in your terminal with real album art support.
+ .
+ Features:
+  * Browse your YouTube Music playlists and library
+  * Full-text search across YouTube Music
+  * Download tracks with cover art
+  * Play local music folders
+  * Real album art in terminal (Kitty graphics protocol)
+  * Queue management, shuffle, repeat modes
+  * Multiple themes (Tokyo Night, Gruvbox, Catppuccin, etc.)
+  * Gapless streaming with mpv backend

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytm-tui"
+version = "1.5.0"
+description = "A terminal music player for your YouTube Music account"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "shuka0158", email = "shukakidze.davit2010@gmail.com"}
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pillow==12.3.0",
+    "requests==2.34.2",
+    "secretstorage==3.5.0",
+    "textual==8.2.8",
+    "textual-image==0.13.2",
+    "yt-dlp==2026.8.19",
+    "ytmusicapi==1.12.2",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Natural Language :: English",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/shuka0158/ytm-tui"
+Repository = "https://github.com/shuka0158/ytm-tui.git"
+Issues = "https://github.com/shuka0158/ytm-tui/issues"
+
+[project.scripts]
+ytm-tui = "ytmtui.__main__:main"
+
+[tool.setuptools]
+packages = ["ytmtui"]
+
+[tool.setuptools.package-data]
+ytmtui = ["theme.tcss"]
