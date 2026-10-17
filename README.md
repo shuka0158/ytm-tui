@@ -57,6 +57,40 @@ your terminal, with real album art via the kitty graphics protocol.
 
 ## Install
 
+### Ubuntu / Debian (apt)
+
+```sh
+sudo add-apt-repository ppa:shuka/ytm-tui
+sudo apt update
+sudo apt install ytm-tui
+```
+
+Then launch with `ytm-tui`.
+
+### Arch Linux (AUR)
+
+```sh
+yay -S ytm-tui
+```
+
+Or manually:
+
+```sh
+git clone https://aur.archlinux.org/ytm-tui.git
+cd ytm-tui
+makepkg -si
+```
+
+### pip
+
+```sh
+pip install ytm-tui
+```
+
+Then launch with `ytm-tui`.
+
+### From source
+
 ```sh
 git clone https://github.com/shuka0158/ytm-tui.git
 cd ytm-tui
