@@ -85,9 +85,8 @@ makepkg -si
 
 ```sh
 pip install ytm-tui-player
+ytm-tui
 ```
-
-Then launch with `ytm-tui`.
 
 ### From source
 
