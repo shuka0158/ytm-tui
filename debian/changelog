@@ -1,3 +1,9 @@
+ytm-tui (1.5.0-2) unstable; urgency=medium
+
+  * Re-upload with registered GPG key
+
+ -- shuka0158 <shukakidze.davit2010@gmail.com>  Mon, 20 Oct 2026 12:00:00 +0000
+
 ytm-tui (1.5.0-1) unstable; urgency=medium
 
   * Initial Debian package release
