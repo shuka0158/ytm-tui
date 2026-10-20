@@ -7,7 +7,7 @@ name = "ytm-tui-player"
 version = "1.5.1"
 description = "A terminal music player for your YouTube Music account"
 readme = "README.md"
-license = "GPL-3.0-or-later"
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "shuka0158", email = "shukakidze.davit2010@gmail.com"}
 ]
