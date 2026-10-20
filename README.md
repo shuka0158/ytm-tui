@@ -60,7 +60,7 @@ your terminal, with real album art via the kitty graphics protocol.
 ### Ubuntu / Debian (apt)
 
 ```sh
-sudo add-apt-repository ppa:shuka/ytm-tui
+sudo add-apt-repository ppa:shuka0158/ytm-tui
 sudo apt update
 sudo apt install ytm-tui
 ```
