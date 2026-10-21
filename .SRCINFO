@@ -1,0 +1,26 @@
+pkgbase = ytm-tui
+	pkgdesc = A terminal music player for your YouTube Music account
+	pkgver = 1.5.2
+	pkgrel = 1
+	url = https://github.com/shuka0158/ytm-tui
+	arch = x86_64
+	arch = aarch64
+	license = GPL3
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python>=3.11
+	depends = mpv
+	depends = ffmpeg
+	depends = python-pillow
+	depends = python-requests
+	depends = python-secretstorage
+	depends = python-textual
+	depends = python-textual-image
+	depends = python-yt-dlp
+	depends = python-ytmusicapi
+	source = https://github.com/shuka0158/ytm-tui/archive/v1.5.2.tar.gz
+	sha256sums = a6261e57fbe762e9306d8879db4cb261ee24cc415eace6a6d3741e6dcbb3b8bc
+
+pkgname = ytm-tui
