@@ -39,6 +39,8 @@ OAUTH_CLIENT = CONFIG_DIR / "oauth_client.json"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 # Generated from the credentials above; see ytmtui/cookies.py.
 COOKIES_FILE = CONFIG_DIR / "cookies.txt"
+# The queue and playback position from the last run.
+SESSION_FILE = CONFIG_DIR / "session.json"
 
 DEFAULTS: dict[str, Any] = {
     "volume": 80,
@@ -57,6 +59,9 @@ DEFAULTS: dict[str, Any] = {
     # ~/Music if it exists. Add paths here to include more, e.g. ["~/Music",
     # "/mnt/nas/songs"].
     "local_music_dirs": [],
+    # Remember the queue and position between runs; space picks it back up.
+    "resume": True,
+    "search_filter": "all",   # all | songs | videos | albums | artists | playlists
 }
 
 # yt-dlp accepts BROWSER[+KEYRING][:PROFILE][::CONTAINER] as one string.
@@ -115,6 +120,28 @@ def save_settings(settings: dict[str, Any]) -> None:
     ensure_dirs()
     try:
         SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+    except OSError:
+        pass
+
+
+def load_session() -> dict[str, Any] | None:
+    try:
+        data = json.loads(SESSION_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_session(session: dict[str, Any] | None) -> None:
+    """Write the session atomically, or delete it when there is nothing to keep."""
+    try:
+        if session is None:
+            SESSION_FILE.unlink(missing_ok=True)
+            return
+        ensure_dirs()
+        tmp = SESSION_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(session))
+        tmp.replace(SESSION_FILE)
     except OSError:
         pass
 

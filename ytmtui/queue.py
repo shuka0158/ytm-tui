@@ -18,7 +18,9 @@
 """Playback queue: play order, random and repeat."""
 from __future__ import annotations
 
+import dataclasses
 import random
+from dataclasses import asdict
 
 from .models import Track
 
@@ -122,3 +124,93 @@ class PlayQueue:
     def extend(self, tracks: list[Track]) -> None:
         for track in tracks:
             self.append(track)
+
+    # -- editing -----------------------------------------------------------
+    # Every edit works on the tracks in play order and writes them back with an
+    # identity order, so what the queue shows is what is stored, and turning
+    # random off afterwards does not undo the edit.
+    def _play_order(self) -> list[Track]:
+        return [self.tracks[i] for i in self.order]
+
+    def _set_play_order(self, seq: list[Track], pos: int) -> None:
+        self.tracks = seq
+        self.order = list(range(len(seq)))
+        self.pos = pos if seq else -1
+
+    def play_next(self, track: Track) -> None:
+        """Slot a track in right after the one that is playing."""
+        seq = self._play_order()
+        seq.insert(self.pos + 1, track)
+        self._set_play_order(seq, self.pos)
+
+    def remove(self, position: int) -> bool:
+        """Drop the track at a play-order position. The playing one stays."""
+        if not (0 <= position < len(self.order)) or position == self.pos:
+            return False
+        seq = self._play_order()
+        del seq[position]
+        self._set_play_order(seq, self.pos - 1 if position < self.pos else self.pos)
+        return True
+
+    def move(self, position: int, delta: int) -> int:
+        """Shift a track up or down; returns where it ended up."""
+        target = position + delta
+        if not (0 <= position < len(self.order) and 0 <= target < len(self.order)):
+            return position
+        seq = self._play_order()
+        seq[position], seq[target] = seq[target], seq[position]
+        pos = self.pos
+        if pos == position:
+            pos = target
+        elif pos == target:
+            pos = position
+        self._set_play_order(seq, pos)
+        return target
+
+    def clear_upcoming(self) -> int:
+        """Forget everything after the playing track; returns how many went."""
+        before = len(self.order)
+        keep = self._play_order()[: self.pos + 1] if self.pos >= 0 else []
+        self._set_play_order(keep, self.pos)
+        return before - len(keep)
+
+    def jump_to(self, position: int) -> Track | None:
+        if not (0 <= position < len(self.order)):
+            return None
+        self.pos = position
+        return self.current()
+
+    # -- persistence -------------------------------------------------------
+    def snapshot(self, behind: int = 20, ahead: int = 1000) -> dict | None:
+        """The queue around the playing track, or None if nothing is playing.
+
+        Capped, because a library queue can be thousands of tracks long and this
+        is rewritten while you listen.
+        """
+        if not (0 <= self.pos < len(self.order)):
+            return None
+        lo = max(0, self.pos - behind)
+        hi = min(len(self.order), self.pos + 1 + ahead)
+        seq = [self.tracks[i] for i in self.order[lo:hi]]
+        return {
+            "source": self.source,
+            "pos": self.pos - lo,
+            "tracks": [asdict(t) for t in seq],
+        }
+
+    def restore(self, state: dict) -> bool:
+        """Load a snapshot(); False if it is unusable."""
+        try:
+            fields = {f.name for f in dataclasses.fields(Track)}
+            seq = [
+                Track(**{k: v for k, v in raw.items() if k in fields})
+                for raw in state["tracks"]
+            ]
+            pos = int(state["pos"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not (0 <= pos < len(seq)):
+            return False
+        self.source = str(state.get("source", ""))
+        self._set_play_order(seq, pos)
+        return True

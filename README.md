@@ -31,6 +31,11 @@ your terminal, with real album art via the kitty graphics protocol.
   elsewhere), including for downloaded/local tracks
 - Queue, random order, repeat, seek, volume, playback speed — remembered
   between runs
+- Edit the queue: reorder, remove, play next, clear what's coming
+- Search for albums, artists and playlists as well as songs, and open them
+- Sleep timer that fades the volume out before pausing
+- Picks up where you left off: the queue and position are restored on start
+  (paused — press space). Set `"resume": false` in `config/settings.json` to turn it off
 - Track selection follows whatever is currently playing
 - Sixteen themes — Tokyo Night, Gruvbox, Catppuccin, Nord, Dracula, two
   high-contrast ones and your terminal's own ANSI palette
@@ -190,8 +195,12 @@ steps above.
 | `r` | repeat: off → all → one |
 | `v` | playback speed: 1.0x → 1.25x → 1.5x → 1.75x → 2x → 0.75x |
 | `x` | stop |
-| `/` | search YouTube Music |
+| `/` | search YouTube Music (`tab` in the box picks songs / videos / albums / artists / playlists) |
+| `backspace` | back to the search results from an album, artist or playlist |
 | `a` | append the highlighted track to the queue |
+| `N` | play the highlighted track next |
+| `Q` | open the queue: `enter` play, `d` remove, `K` / `J` move up / down, `c` clear upcoming |
+| `z` | sleep timer: 15 min – 90 min or after this track; fades out over the last 15s, then pauses |
 | `d` | download the highlighted track (asks for a folder, saves cover art too) |
 | `F5` / `ctrl+r` | reload playlists |
 | `t` | theme picker |

@@ -44,7 +44,7 @@ from textual_image.widget import Image
 from . import art, config, cookies, local, lyrics, themes
 from .disc import Disc, Visualizer
 from .api import AuthMissing, Library
-from .models import Playlist, Track, fmt_duration
+from .models import Collection, Playlist, Track, fmt_duration
 from .player import MpvPlayer
 from .queue import PlayQueue
 from .resolver import JS_RUNTIME_HINT, Resolver, TrackBlocked, missing_js_runtime
@@ -52,20 +52,187 @@ from .resolver import JS_RUNTIME_HINT, Resolver, TrackBlocked, missing_js_runtim
 BAR_WIDTH = 44
 SPEED_PRESETS = (1.0, 1.25, 1.5, 1.75, 2.0, 0.75)
 
+# (key, label). The first three give tracks; the rest give things you open.
+SEARCH_FILTERS = (
+    ("all", "All"),
+    ("songs", "Songs"),
+    ("videos", "Videos"),
+    ("albums", "Albums"),
+    ("artists", "Artists"),
+    ("playlists", "Playlists"),
+)
+_TRACK_SEARCH_KINDS = {
+    "all": ("songs", "videos"),
+    "songs": ("songs",),
+    "videos": ("videos",),
+}
 
-class SearchScreen(ModalScreen[str | None]):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+# (label, value): minutes, 0 to switch it off, or "track" to stop after this one.
+SLEEP_CHOICES = (
+    ("Off", 0),
+    ("15 minutes", 15),
+    ("30 minutes", 30),
+    ("45 minutes", 45),
+    ("1 hour", 60),
+    ("90 minutes", 90),
+    ("After this track", "track"),
+)
+SLEEP_FADE_SECONDS = 15
+SESSION_SAVE_EVERY = 20.0
+
+
+class SearchScreen(ModalScreen["tuple[str, str] | None"]):
+    """Dismisses with (query, filter key), or None."""
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("tab", "next_filter", "Next filter"),
+        ("shift+tab", "prev_filter", "Previous filter"),
+    ]
+
+    def __init__(self, filter_key: str) -> None:
+        super().__init__()
+        self.filter_index = next(
+            (i for i, (key, _) in enumerate(SEARCH_FILTERS) if key == filter_key), 0
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="search-box"):
             yield Label("Search YouTube Music")
+            yield Static("", id="search-filters")
             yield Input(placeholder="song, artist, album…", id="search-input")
+            yield Static("[dim]tab filter   enter search   esc cancel[/dim]")
 
     def on_mount(self) -> None:
+        self._draw_filters()
         self.query_one(Input).focus()
 
+    def _draw_filters(self) -> None:
+        chips = [
+            f"[reverse] {label} [/reverse]" if i == self.filter_index else f" {label} "
+            for i, (_, label) in enumerate(SEARCH_FILTERS)
+        ]
+        self.query_one("#search-filters", Static).update(" ".join(chips))
+
+    def action_next_filter(self) -> None:
+        self.filter_index = (self.filter_index + 1) % len(SEARCH_FILTERS)
+        self._draw_filters()
+
+    def action_prev_filter(self) -> None:
+        self.filter_index = (self.filter_index - 1) % len(SEARCH_FILTERS)
+        self._draw_filters()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value.strip() or None)
+        query = event.value.strip()
+        self.dismiss((query, SEARCH_FILTERS[self.filter_index][0]) if query else None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class SleepScreen(ModalScreen["int | str | None"]):
+    """Sleep-timer picker. Dismisses with minutes, 0 for off, "track", or None."""
+
+    BINDINGS = [("escape,q,z", "cancel", "Cancel")]
+
+    def __init__(self, active: str) -> None:
+        super().__init__()
+        self.active = active
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="theme-box"):
+            yield Label("Sleep timer" + (f"  [dim]{self.active}[/dim]" if self.active else ""))
+            yield ListView(
+                *(ListItem(Label(label)) for label, _ in SLEEP_CHOICES),
+                id="theme-list",
+            )
+            yield Static("[dim]↑↓ choose   enter set   esc cancel[/dim]")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        index = event.list_view.index
+        self.dismiss(SLEEP_CHOICES[index][1] if index is not None else None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class QueueScreen(ModalScreen[None]):
+    """The play queue: jump, remove, reorder, clear what's coming."""
+
+    BINDINGS = [
+        ("escape,q,Q", "cancel", "Close"),
+        ("d,delete", "remove", "Remove"),
+        ("K,shift+up", "move_up", "Move up"),
+        ("J,shift+down", "move_down", "Move down"),
+        ("c", "clear", "Clear upcoming"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="queue-box"):
+            yield Static("", id="queue-heading")
+            yield DataTable(id="queue-table", cursor_type="row", zebra_stripes=True)
+            yield Static(
+                "[dim]enter play   d remove   K/J move up/down   c clear upcoming   esc close[/dim]"
+            )
+
+    def on_mount(self) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        table.add_column("", width=1)
+        table.add_column("#", width=4)
+        table.add_column("Title", width=40)
+        table.add_column("Artist", width=24)
+        table.add_column("Time", width=6)
+        self.refresh_rows(cursor=self.app.queue.pos)
+        table.focus()
+
+    def refresh_rows(self, cursor: int | None = None) -> None:
+        queue = self.app.queue
+        table = self.query_one("#queue-table", DataTable)
+        keep = table.cursor_row if cursor is None else cursor
+        table.clear()
+        for position, index in enumerate(queue.order):
+            track = queue.tracks[index]
+            table.add_row(
+                "▶" if position == queue.pos else "",
+                str(position + 1),
+                self.app._clip(track.title, 40),
+                self.app._clip(track.artist, 24),
+                fmt_duration(track.duration),
+            )
+        if queue.order:
+            table.move_cursor(row=max(0, min(keep, len(queue.order) - 1)))
+        heading = f"[b]Queue[/b]  [dim]{len(queue.order)} tracks"
+        if queue.source:
+            heading += f"  ·  {queue.source}"
+        self.query_one("#queue-heading", Static).update(heading + "[/dim]")
+
+    def _row(self) -> int | None:
+        table = self.query_one("#queue-table", DataTable)
+        return table.cursor_row if table.row_count else None
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        self.app.queue_play(event.cursor_row)
+        self.refresh_rows(cursor=event.cursor_row)
+
+    def action_remove(self) -> None:
+        row = self._row()
+        if row is not None and self.app.queue_remove(row):
+            self.refresh_rows(cursor=row)
+
+    def action_move_up(self) -> None:
+        row = self._row()
+        if row is not None:
+            self.refresh_rows(cursor=self.app.queue_move(row, -1))
+
+    def action_move_down(self) -> None:
+        row = self._row()
+        if row is not None:
+            self.refresh_rows(cursor=self.app.queue_move(row, 1))
+
+    def action_clear(self) -> None:
+        self.app.queue_clear_upcoming()
+        self.refresh_rows()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -169,42 +336,94 @@ class ImportFolderScreen(ModalScreen[str | None]):
 
 
 class HelpScreen(ModalScreen[None]):
+    """Every key, in one scrollable box."""
+
     BINDINGS = [("escape,question_mark,q", "cancel", "Close")]
 
-    HELP = """[b]Playback[/b]
-  [cyan]enter[/cyan]      play highlighted track
-  [cyan]space[/cyan]      play / pause
-  [cyan]n[/cyan] / [cyan]p[/cyan]      next / previous track
-  [cyan]←[/cyan] / [cyan]→[/cyan]      seek 5s      [cyan]shift+←/→[/cyan] seek 30s
-  [cyan]+[/cyan] / [cyan]-[/cyan]      volume
-  [cyan]s[/cyan]          random        [cyan]r[/cyan]  repeat off/all/one
-  [cyan]v[/cyan]          speed 1.0x/1.25x/1.5x/1.75x/2x/0.75x
-  [cyan]x[/cyan]          stop
+    HELP = """[dim]↑↓  pgup/pgdn  home/end  scroll          esc  close[/dim]
+
+[b]Playback[/b]
+  [cyan]enter[/cyan]         play the highlighted track
+  [cyan]space[/cyan]         play / pause (also resumes last session)
+  [cyan]n[/cyan]             next track
+  [cyan]p[/cyan]             previous (restart it if past 5s)
+  [cyan]←[/cyan] [cyan]→[/cyan]          seek 5s
+  [cyan]shift+←[/cyan] [cyan]→[/cyan]    seek 30s
+  [cyan]+[/cyan] [cyan]-[/cyan]          volume up / down
+  [cyan]s[/cyan]             random on / off
+  [cyan]r[/cyan]             repeat: off, all, one
+  [cyan]v[/cyan]             speed: 1, 1.25, 1.5, 1.75, 2, 0.75x
+  [cyan]x[/cyan]             stop (forgets the saved session)
+  [cyan]z[/cyan]             sleep timer
+
+[b]Queue[/b]
+  [cyan]a[/cyan]             add highlighted track to the end
+  [cyan]N[/cyan]             play highlighted track next
+  [cyan]Q[/cyan]             open the queue editor
 
 [b]Library[/b]
-  [cyan]/[/cyan]          search YouTube Music
-  [cyan]a[/cyan]          append highlighted track to the queue
-  [cyan]A[/cyan]          add highlighted track to a playlist (or create one)
-  [cyan]d[/cyan]          download highlighted track (asks for a folder)
-  [cyan]l[/cyan]          lyrics for the track that's playing (via Genius)
-  [cyan]F5[/cyan]         reload playlists
-  [cyan]t[/cyan]          theme picker
-  [cyan]tab[/cyan]        move between panes
+  [cyan]/[/cyan]             search YouTube Music
+  [cyan]backspace[/cyan]     back to the search results (also [cyan]b[/cyan]);
+                 after opening an album/artist/playlist
+  [cyan]A[/cyan]             add highlighted track to a playlist,
+                 or create a new one
+  [cyan]d[/cyan]             download highlighted track
+  [cyan]l[/cyan]             lyrics for the playing track (Genius)
+  [cyan]F5[/cyan] [cyan]ctrl+r[/cyan]    reload playlists
+  [cyan]t[/cyan]             theme picker
+  [cyan]tab[/cyan]           move between panes
+  [cyan]?[/cyan]             this help
+  [cyan]q[/cyan] [cyan]ctrl+c[/cyan]     quit
+
+[b]In the search box[/b]
+  [cyan]tab[/cyan]           next filter: All, Songs, Videos,
+                 Albums, Artists, Playlists
+  [cyan]shift+tab[/cyan]     previous filter
+  [cyan]enter[/cyan]         search
+  [cyan]esc[/cyan]           cancel
+  Albums, artists and playlists come back as rows:
+  [cyan]enter[/cyan] opens one, [cyan]backspace[/cyan] returns to the results.
+
+[b]In the queue editor[/b]
+  [cyan]↑[/cyan] [cyan]↓[/cyan]          move the cursor
+  [cyan]enter[/cyan]         play that row
+  [cyan]d[/cyan] [cyan]delete[/cyan]     remove the row (not the playing one)
+  [cyan]K[/cyan] [cyan]shift+↑[/cyan]    move the row up
+  [cyan]J[/cyan] [cyan]shift+↓[/cyan]    move the row down
+  [cyan]c[/cyan]             clear everything after the playing track
+  [cyan]esc[/cyan] [cyan]q[/cyan] [cyan]Q[/cyan]     close
+  Playback keys (space, n, p) still work while open.
+
+[b]Sleep timer ([/b][cyan]z[/cyan][b])[/b]
+  [cyan]↑[/cyan] [cyan]↓[/cyan]          choose: off, 15 / 30 / 45 / 60 / 90
+                 minutes, or after this track
+  [cyan]enter[/cyan]         set      [cyan]esc[/cyan] [cyan]z[/cyan]  cancel
+  The volume fades over the last 15s, then it pauses.
+
+[b]Theme picker ([/b][cyan]t[/cyan][b])[/b]
+  [cyan]↑[/cyan] [cyan]↓[/cyan]          preview a theme
+  [cyan]enter[/cyan]         keep it      [cyan]esc[/cyan]  put the old one back
 
 [b]Local & Downloads[/b]
-  [cyan]Local[/cyan]      browse audio files from your local music folders
-                [cyan]Import Folder…[/cyan] button adds another folder to scan
-  [cyan]Downloads[/cyan]  tracks saved from ytm-tui with [cyan]d[/cyan]
+  [cyan]Local[/cyan]         audio files from your music folders.
+                 [cyan]Import Folder…[/cyan] adds another one to scan.
+  [cyan]Downloads[/cyan]     tracks saved with [cyan]d[/cyan], with cover art.
 
-  [cyan]?[/cyan] help     [cyan]q[/cyan] quit
+[b]Resume[/b]
+  The queue and position are saved as you listen. Next
+  start, the track is loaded paused: press [cyan]space[/cyan] to
+  carry on. Turn it off with "resume": false in
+  config/settings.json.
 
-[dim]ytm-tui — Copyright (C) 2026 shuka0158 — GPLv3 or later.
-This is free software with ABSOLUTELY NO WARRANTY; you are free to
-change and redistribute it. See the LICENSE file for details.[/dim]"""
+[dim]ytm-tui - Copyright (C) 2026 shuka0158 - GPLv3 or later.
+Free software with ABSOLUTELY NO WARRANTY; you may change
+and redistribute it. See the LICENSE file for details.[/dim]"""
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="help-box"):
-            yield Static(self.HELP)
+        yield VerticalScroll(Static(self.HELP), id="help-box")
+
+    def on_mount(self) -> None:
+        self.query_one("#help-box").focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -291,7 +510,11 @@ class YtmTui(App[None]):
         ("v", "speed", "Speed"),
         ("x", "stop", "Stop"),
         ("slash", "search", "Search"),
-        ("a", "append", "Queue"),
+        ("a", "append", "+Queue"),
+        ("N", "play_next", ""),
+        ("Q", "queue", "Queue"),
+        ("z", "sleep", "Sleep"),
+        ("backspace,b", "back", "Back"),
         ("d", "download", "Download"),
         ("A", "add_to_playlist", "+Playlist"),
         ("l", "lyrics", "Lyrics"),
@@ -322,8 +545,26 @@ class YtmTui(App[None]):
         # ("local", None) | ("downloads", None) | ("playlist", Playlist)
         self._sidebar_kinds: list[tuple[str, Playlist | None]] = []
         self.view_tracks: list[Track] = []
+        # Set instead of view_tracks while the table lists albums, artists or
+        # playlists from a search; Enter opens one rather than playing it.
+        self.view_collections: list[Collection] = []
         self.view_title: str = ""
+        # The last set of search collections, and whether the tracks on screen
+        # were opened from them (so Backspace can return).
+        self._last_collections: tuple[str, list[Collection]] | None = None
+        self._can_go_back = False
+        known = {key for key, _ in SEARCH_FILTERS}
+        self.search_filter = self.settings.get("search_filter")
+        if self.search_filter not in known:
+            self.search_filter = "all"
         self.playing_row: int | None = None
+        # Sleep timer: a monotonic deadline, or "end of this track".
+        self._sleep_deadline: float | None = None
+        self._sleep_after_track = False
+        self._sleep_fading = False
+        # Where to pick up the restored track; None once playback has started.
+        self._resume_pos: float | None = None
+        self._session_saved_at = 0.0
         # Skipping a failed track wraps around at the end of the queue, so a
         # queue where everything fails would skip forever. Bound it.
         self._failures_in_a_row = 0
@@ -400,6 +641,7 @@ class YtmTui(App[None]):
         # Local/Downloads don't need the network, so they show up immediately
         # rather than waiting on the library connection below.
         self._fill_playlists([])
+        self._restore_session()
         self._connect_library()
 
     def on_unmount(self) -> None:
@@ -409,8 +651,10 @@ class YtmTui(App[None]):
             random=self.queue.random,
             repeat=self.queue.repeat,
             theme=self.theme,
+            search_filter=self.search_filter,
         )
         config.save_settings(self.settings)
+        self._save_session()
         self.resolver.shutdown()
         self.player.close()
 
@@ -534,14 +778,43 @@ class YtmTui(App[None]):
         playlist.loaded = True
         self.call_from_thread(self._show_tracks, tracks, playlist.title)
 
-    def _show_tracks(self, tracks: list[Track], title: str) -> None:
+    def _show_tracks(
+        self, tracks: list[Track], title: str, from_collection: bool = False
+    ) -> None:
         self.view_tracks = tracks
+        self.view_collections = []
         self.view_title = title
+        self._can_go_back = from_collection and self._last_collections is not None
         self._render_rows(cursor=0)
         self.query_one("#tracks-title", Static).update(
             f"{title}  [dim]{len(tracks)} tracks[/dim]"
         )
         self.query_one("#import-folder-btn", Button).display = title == "Local"
+        self.screen.refresh_bindings()
+
+    def _show_collections(self, collections: list[Collection], title: str) -> None:
+        self.view_tracks = []
+        self.view_collections = collections
+        self.view_title = title
+        self._can_go_back = False
+        self._last_collections = (title, collections)
+        self._render_rows(cursor=0)
+        self.query_one("#tracks-title", Static).update(
+            f"{title}  [dim]{len(collections)} results — enter to open[/dim]"
+        )
+        self.query_one("#import-folder-btn", Button).display = False
+        self.screen.refresh_bindings()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # Only offer "Back" when there is somewhere to go back to.
+        if action == "back":
+            return self._can_go_back
+        return True
+
+    def action_back(self) -> None:
+        if self._can_go_back and self._last_collections is not None:
+            title, collections = self._last_collections
+            self._show_collections(collections, title)
 
     @staticmethod
     def _clip(text: str, width: int) -> str:
@@ -578,26 +851,35 @@ class YtmTui(App[None]):
             column.auto_width = False
             column.width = width
         table.clear()
-        for i, track in enumerate(self.view_tracks, start=1):
+        rows = self._view_rows()
+        for i, (title, artist, album, duration) in enumerate(rows, start=1):
             table.add_row(
                 "",
                 str(i),
-                self._clip(track.title, title_w),
-                self._clip(track.artist, artist_w),
-                self._clip(track.album, album_w),
-                fmt_duration(track.duration),
+                self._clip(title, title_w),
+                self._clip(artist, artist_w),
+                self._clip(album, album_w),
+                duration,
             )
         self.playing_row = self._current_view_row()
         self._mark_playing_row()
-        if self.view_tracks:
-            table.move_cursor(row=max(0, min(keep, len(self.view_tracks) - 1)))
+        if rows:
+            table.move_cursor(row=max(0, min(keep, len(rows) - 1)))
+
+    def _view_rows(self) -> list[tuple[str, str, str, str]]:
+        """(title, artist, album, time) for whatever the table is showing."""
+        if self.view_collections:
+            return [(c.title, c.subtitle, c.detail, "") for c in self.view_collections]
+        return [
+            (t.title, t.artist, t.album, fmt_duration(t.duration)) for t in self.view_tracks
+        ]
 
     def on_resize(self, event) -> None:
         # Child widgets still report the old size during this event, so use the
         # size the event carries and redraw once layout has settled. The width
         # check in _tick catches anything missed.
         self._apply_sidebar_width(event.size.width)
-        if self.view_tracks:
+        if self.view_tracks or self.view_collections:
             self.call_after_refresh(self._render_rows)
 
     # -- events ------------------------------------------------------------
@@ -615,7 +897,38 @@ class YtmTui(App[None]):
         self.query_one("#tracks", DataTable).focus()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self._play_from_view(event.cursor_row)
+        if event.data_table.id != "tracks":
+            return
+        row = event.cursor_row
+        if self.view_collections:
+            if 0 <= row < len(self.view_collections):
+                self._open_collection(self.view_collections[row])
+            return
+        self._play_from_view(row)
+
+    def _open_collection(self, collection: Collection) -> None:
+        self.query_one("#tracks-title", Static).update(
+            f"{collection.title}  [dim]loading…[/dim]"
+        )
+        self._collection_worker(collection)
+
+    @work(thread=True, group="tracks", exclusive=True)
+    def _collection_worker(self, collection: Collection) -> None:
+        if self.library is None:
+            return
+        try:
+            tracks = self.library.collection_tracks(collection)
+        except Exception as exc:
+            self.call_from_thread(
+                self.notify, f"Failed to open {collection.title}: {exc}", severity="error"
+            )
+            return
+        if not tracks:
+            self.call_from_thread(
+                self.notify, f"Nothing playable in {collection.title}.", timeout=4
+            )
+            return
+        self.call_from_thread(self._show_tracks, tracks, collection.title, True)
 
     # -- playback ----------------------------------------------------------
     def _play_from_view(self, index: int) -> None:
@@ -625,20 +938,24 @@ class YtmTui(App[None]):
         self._failures_in_a_row = 0  # a deliberate choice deserves a fresh run
         self._start_current()
 
-    def _start_current(self) -> None:
+    def _start_current(self, start: float = 0.0) -> None:
         track = self.queue.current()
         if track is None:
             return
+        self._resume_pos = None  # playback is starting; nothing left to resume
+        # The old track's position must not be saved against the new one.
+        self.player.time_pos = start
+        self.player.duration = 0.0
         self._set_now_playing(track)
         if track.local_path:
-            self._play_local(track)
+            self._play_local(track, start)
         else:
-            self._resolve_and_play(track)
+            self._resolve_and_play(track, start)
 
     @work(thread=True, group="play", exclusive=True)
-    def _play_local(self, track: Track) -> None:
+    def _play_local(self, track: Track, start: float = 0.0) -> None:
         try:
-            self.player.play_url(track.local_path)
+            self.player.play_url(track.local_path, start=start)
         except Exception as exc:
             self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
             return
@@ -648,7 +965,7 @@ class YtmTui(App[None]):
             self.resolver.prefetch(upcoming.video_id)
 
     @work(thread=True, group="play", exclusive=True)
-    def _resolve_and_play(self, track: Track) -> None:
+    def _resolve_and_play(self, track: Track, start: float = 0.0) -> None:
         worker = get_current_worker()
         try:
             url, headers = self.resolver.resolve(track.video_id)
@@ -679,7 +996,7 @@ class YtmTui(App[None]):
             return
         self._failures_in_a_row = 0
         try:
-            self.player.play_url(url, headers)
+            self.player.play_url(url, headers, start=start)
         except Exception as exc:
             self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
             return
@@ -759,6 +1076,48 @@ class YtmTui(App[None]):
         self._mark_playing_row()
         self._follow_playing_row()
         self._load_art(track.thumb)
+        if isinstance(self.screen, QueueScreen):
+            self.screen.refresh_rows(cursor=self.queue.pos)
+        self._save_session()
+
+    # -- session (resume) --------------------------------------------------
+    def _save_session(self) -> None:
+        """Write the queue and position so the next run can pick them up."""
+        self._session_saved_at = time.monotonic()
+        if not self.settings.get("resume", True):
+            return
+        snapshot = self.queue.snapshot()
+        if snapshot is None:
+            config.save_session(None)
+            return
+        if self._resume_pos is not None:
+            position = self._resume_pos  # restored but not started: keep the old spot
+        else:
+            position = self.player.time_pos
+            total = self.player.duration or snapshot["tracks"][snapshot["pos"]]["duration"]
+            if total and position > total - 5:
+                position = 0.0  # the track was effectively over
+        snapshot["position"] = round(position, 1)
+        config.save_session(snapshot)
+
+    def _restore_session(self) -> None:
+        """Bring back last run's queue, paused. Space picks it up from where it stopped."""
+        if not self.settings.get("resume", True):
+            return
+        session = config.load_session()
+        if session is None or not self.queue.restore(session):
+            return
+        track = self.queue.current()
+        try:
+            position = max(0.0, float(session.get("position", 0.0)))
+        except (TypeError, ValueError):
+            position = 0.0
+        self._resume_pos = position
+        self._set_now_playing(track)
+        self.notify(
+            f'Space resumes "{track.title}" at {fmt_duration(position) if position else "the start"}.',
+            timeout=6,
+        )
 
     @work(thread=True, group="art", exclusive=True)
     def _load_art(self, url: str) -> None:
@@ -829,6 +1188,10 @@ class YtmTui(App[None]):
             pass
 
     def _advance_auto(self) -> None:
+        if self._sleep_after_track:
+            self._sleep_after_track = False
+            self.notify("Sleep timer: stopped after the track.", timeout=6)
+            return
         if self.queue.advance(manual=False) is not None:
             self._start_current()
         else:
@@ -836,13 +1199,21 @@ class YtmTui(App[None]):
 
     # -- periodic UI refresh ----------------------------------------------
     def _tick(self) -> None:
-        if self.view_tracks:
+        if self.view_tracks or self.view_collections:
             table = self.query_one("#tracks", DataTable)
             if table.size.width != self._rendered_width:
                 self._render_rows()
 
+        self._tick_sleep()
+        if (
+            self._resume_pos is None
+            and not self.player.paused
+            and time.monotonic() - self._session_saved_at >= SESSION_SAVE_EVERY
+        ):
+            self._save_session()
+
         track = self.queue.current()
-        position = self.player.time_pos
+        position = self._resume_pos if self._resume_pos is not None else self.player.time_pos
         total = self.player.duration or (track.duration if track else 0)
 
         ratio = position / total if total else 0.0
@@ -855,6 +1226,8 @@ class YtmTui(App[None]):
 
         if track is None:
             state = "idle"
+        elif self._resume_pos is not None:
+            state = "space to resume"
         elif self.player.paused:
             state = "paused"
         elif self.player.duration == 0:
@@ -871,6 +1244,9 @@ class YtmTui(App[None]):
         ]
         if self.queue.tracks:
             bits.append(f"{self.queue.pos + 1}/{len(self.queue.order)}  {self.queue.source}")
+        sleep = self._sleep_label()
+        if sleep:
+            bits.append(f"sleep {sleep}")
         self.query_one("#np-status", Static).update("[dim]" + "   ·   ".join(bits) + "[/dim]")
 
         disc = self.query_one("#disc", Disc)
@@ -880,8 +1256,93 @@ class YtmTui(App[None]):
         viz.display = track is not None
         viz.spin(state == "playing")
 
+    # -- sleep timer -------------------------------------------------------
+    def _sleep_label(self) -> str:
+        """What the status line says about the timer, or "" when it is off."""
+        if self._sleep_after_track:
+            return "after track"
+        if self._sleep_deadline is not None:
+            minutes, seconds = divmod(max(0, int(self._sleep_deadline - time.monotonic())), 60)
+            return f"{minutes}:{seconds:02d}"
+        return ""
+
+    def _tick_sleep(self) -> None:
+        if self._sleep_deadline is None:
+            return
+        remaining = self._sleep_deadline - time.monotonic()
+        if remaining <= 0:
+            self._sleep_deadline = None
+            self._sleep_fading = False
+            if not self.player.paused:
+                self.player.toggle_pause()
+            self.player.set_volume(self.volume)  # ready for when you press play
+            self.notify("Sleep timer: paused. Goodnight.", timeout=8)
+        elif remaining <= SLEEP_FADE_SECONDS:
+            self._sleep_fading = True
+            self.player.set_volume(int(self.volume * remaining / SLEEP_FADE_SECONDS))
+
+    def _cancel_sleep(self) -> None:
+        if self._sleep_fading:
+            self.player.set_volume(self.volume)
+        self._sleep_deadline = None
+        self._sleep_after_track = False
+        self._sleep_fading = False
+
+    def action_sleep(self) -> None:
+        self.push_screen(SleepScreen(self._sleep_label()), callback=self._set_sleep)
+
+    def _set_sleep(self, choice: "int | str | None") -> None:
+        if choice is None:
+            return
+        self._cancel_sleep()
+        if choice == "track":
+            self._sleep_after_track = True
+            self.notify("Sleep timer: stopping after this track.", timeout=3)
+        elif choice:
+            self._sleep_deadline = time.monotonic() + int(choice) * 60
+            self.notify(f"Sleep timer: {choice} minutes.", timeout=3)
+        else:
+            self.notify("Sleep timer off.", timeout=2)
+
+    # -- queue editing -----------------------------------------------------
+    def action_queue(self) -> None:
+        if not self.queue.order:
+            self.notify("The queue is empty. Play something first.", timeout=3)
+            return
+        self.push_screen(QueueScreen())
+
+    def queue_play(self, position: int) -> None:
+        if self.queue.jump_to(position) is not None:
+            self._failures_in_a_row = 0
+            self._start_current()
+
+    def queue_remove(self, position: int) -> bool:
+        if position == self.queue.pos:
+            self.notify("That one is playing. Skip it first.", timeout=3)
+            return False
+        return self.queue.remove(position)
+
+    def queue_move(self, position: int, delta: int) -> int:
+        return self.queue.move(position, delta)
+
+    def queue_clear_upcoming(self) -> None:
+        gone = self.queue.clear_upcoming()
+        self.notify(f"Cleared {gone} upcoming track{'s' if gone != 1 else ''}.", timeout=3)
+
+    def action_play_next(self) -> None:
+        table = self.query_one("#tracks", DataTable)
+        row = table.cursor_row
+        if not self.view_tracks or not (0 <= row < len(self.view_tracks)):
+            return
+        track = self.view_tracks[row]
+        self.queue.play_next(track)
+        self.notify(f"Plays next: {track.title}", timeout=2)
+
     # -- actions -----------------------------------------------------------
     def action_play_pause(self) -> None:
+        if self._resume_pos is not None and self.queue.current() is not None:
+            self._start_current(self._resume_pos)
+            return
         if self.queue.current() is None:
             table = self.query_one("#tracks", DataTable)
             self._play_from_view(table.cursor_row)
@@ -933,6 +1394,7 @@ class YtmTui(App[None]):
     def action_stop(self) -> None:
         self.player.stop()
         self.queue.pos = -1
+        self._resume_pos = None
         self.playing_row = None
         self._mark_playing_row()
         self.query_one("#np-title", Static).update("Nothing playing")
@@ -957,25 +1419,38 @@ class YtmTui(App[None]):
         self.notify(f"Theme: {themes.label(name)}", timeout=2)
 
     def action_search(self) -> None:
-        self.push_screen(SearchScreen(), callback=self._run_search)
+        self.push_screen(SearchScreen(self.search_filter), callback=self._run_search)
 
-    def _run_search(self, query: str | None) -> None:
-        if query:
-            self.query_one("#tracks-title", Static).update(
-                f"Search: {query}  [dim]searching…[/dim]"
-            )
-            self._search_worker(query)
+    def _run_search(self, result: "tuple[str, str] | None") -> None:
+        if not result:
+            return
+        query, kind = result
+        self.search_filter = kind
+        self.query_one("#tracks-title", Static).update(
+            f"Search: {query}  [dim]searching…[/dim]"
+        )
+        self._search_worker(query, kind)
 
     @work(thread=True, group="tracks", exclusive=True)
-    def _search_worker(self, query: str) -> None:
+    def _search_worker(self, query: str, kind: str) -> None:
         if self.library is None:
             return
+        label = dict(SEARCH_FILTERS)[kind]
+        title = f"Search: {query}" + ("" if kind == "all" else f" ({label})")
         try:
-            tracks = self.library.search(query)
+            if kind in _TRACK_SEARCH_KINDS:
+                tracks = self.library.search(query, kinds=_TRACK_SEARCH_KINDS[kind])
+                collections = None
+            else:
+                tracks = None
+                collections = self.library.search_collections(query, kind)
         except Exception as exc:
             self.call_from_thread(self.notify, f"Search failed: {exc}", severity="error")
             return
-        self.call_from_thread(self._show_tracks, tracks, f"Search: {query}")
+        if collections is not None:
+            self.call_from_thread(self._show_collections, collections, title)
+        else:
+            self.call_from_thread(self._show_tracks, tracks, title)
 
     def action_append(self) -> None:
         table = self.query_one("#tracks", DataTable)

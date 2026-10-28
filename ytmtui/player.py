@@ -83,6 +83,7 @@ class MpvPlayer:
         self.paused: bool = True
         self.idle: bool = True
         self.loading: bool = False
+        self._start_at: float = 0.0
 
         # Audio levels for the visualizer: RMS in dB per frequency band, taken
         # from the same stream mpv is playing (see _band_graph). `analysis` is
@@ -316,6 +317,11 @@ class MpvPlayer:
                 self.idle = bool(value)
         elif event == "file-loaded":
             self.loading = False
+            # Seeking once loaded works on every mpv; the loadfile options
+            # argument moved between versions.
+            if self._start_at > 0:
+                start, self._start_at = self._start_at, 0.0
+                self._send(["seek", start, "absolute"], wait=False)
         elif event == "end-file":
             # "stop" fires when we replace the file ourselves; only real
             # end-of-stream should advance the queue.
@@ -325,13 +331,17 @@ class MpvPlayer:
                     self.on_eof()
 
     # -- transport ---------------------------------------------------------
-    def play_url(self, url: str, headers: dict[str, str] | None = None) -> None:
+    def play_url(
+        self, url: str, headers: dict[str, str] | None = None, start: float = 0.0
+    ) -> None:
+        """Load a file. `start` is a position to seek to once it has loaded."""
+        self._start_at = start
         if headers:
             fields = [f"{k}: {v}" for k, v in headers.items() if k.lower() != "range"]
             self._send(["set_property", "http-header-fields", fields], wait=False)
         else:
             self._send(["set_property", "http-header-fields", []], wait=False)
-        self.time_pos = 0.0
+        self.time_pos = start
         self.duration = 0.0
         self.loading = True
         self._send(["loadfile", url, "replace"], wait=False)

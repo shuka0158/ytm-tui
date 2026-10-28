@@ -91,6 +91,19 @@ class Track:
 
 
 @dataclass(slots=True)
+class Collection:
+    """A search hit that opens into tracks rather than playing: an album, an
+    artist or a playlist."""
+
+    kind: str                       # album | artist | playlist
+    browse_id: str
+    title: str
+    subtitle: str = ""              # shown in the Artist column
+    detail: str = ""                # shown in the Album column
+    thumb: str = ""
+
+
+@dataclass(slots=True)
 class Playlist:
     id: str
     title: str
