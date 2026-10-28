@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ytm-tui-player"
-version = "1.5.2"
+version = "1.6.0"
 description = "A terminal music player for your YouTube Music account"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

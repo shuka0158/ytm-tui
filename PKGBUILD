@@ -1,6 +1,6 @@
 # Maintainer: shuka0158 <shukakidze.davit2010@gmail.com>
 pkgname=ytm-tui
-pkgver=1.5.2
+pkgver=1.6.0
 pkgrel=1
 pkgdesc="A terminal music player for your YouTube Music account"
 arch=('x86_64' 'aarch64')
