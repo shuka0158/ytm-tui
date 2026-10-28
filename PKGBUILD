@@ -25,7 +25,7 @@ makedepends=(
     'python-wheel'
 )
 source=("https://github.com/shuka0158/ytm-tui/archive/v${pkgver}.tar.gz")
-sha256sums=('a6261e57fbe762e9306d8879db4cb261ee24cc415eace6a6d3741e6dcbb3b8bc')
+sha256sums=('2ae78e2d36a9a38a4b064e350ca98130689299c41e4fbc23b5afe2b555b94012')
 
 build() {
     cd "$pkgname-$pkgver"
