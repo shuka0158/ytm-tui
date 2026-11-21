@@ -196,6 +196,7 @@ steps above.
 | `v` | playback speed: 1.0x → 1.25x → 1.5x → 1.75x → 2x → 0.75x |
 | `x` | stop |
 | `/` | search YouTube Music (`tab` in the box picks songs / videos / albums / artists / playlists) |
+| `esc` | close the search results and return to the previous view |
 | `backspace` | back to the search results from an album, artist or playlist |
 | `a` | append the highlighted track to the queue |
 | `N` | play the highlighted track next |

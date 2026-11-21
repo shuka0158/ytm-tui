@@ -363,6 +363,7 @@ class HelpScreen(ModalScreen[None]):
 
 [b]Library[/b]
   [cyan]/[/cyan]             search YouTube Music
+  [cyan]esc[/cyan]           close search results, back to the previous view
   [cyan]backspace[/cyan]     back to the search results (also [cyan]b[/cyan]);
                  after opening an album/artist/playlist
   [cyan]A[/cyan]             add highlighted track to a playlist,
@@ -515,6 +516,7 @@ class YtmTui(App[None]):
         ("Q", "queue", "Queue"),
         ("z", "sleep", "Sleep"),
         ("backspace,b", "back", "Back"),
+        ("escape", "close_search", "Close search"),
         ("d", "download", "Download"),
         ("A", "add_to_playlist", "+Playlist"),
         ("l", "lyrics", "Lyrics"),
@@ -553,6 +555,8 @@ class YtmTui(App[None]):
         # were opened from them (so Backspace can return).
         self._last_collections: tuple[str, list[Collection]] | None = None
         self._can_go_back = False
+        # What was on screen before the current search, so Esc can restore it.
+        self._pre_search: tuple | None = None
         known = {key for key, _ in SEARCH_FILTERS}
         self.search_filter = self.settings.get("search_filter")
         if self.search_filter not in known:
@@ -809,7 +813,26 @@ class YtmTui(App[None]):
         # Only offer "Back" when there is somewhere to go back to.
         if action == "back":
             return self._can_go_back
+        if action == "close_search":
+            return self._in_search_view() and self._pre_search is not None
         return True
+
+    def _in_search_view(self) -> bool:
+        return self.view_title.startswith("Search:")
+
+    def action_close_search(self) -> None:
+        """Esc: drop the search results and return to the previous view."""
+        if not (self._in_search_view() and self._pre_search):
+            return
+        tracks, collections, title, can_go_back, last_collections = self._pre_search
+        self._pre_search = None
+        if collections:
+            self._show_collections(collections, title)
+        else:
+            self._show_tracks(tracks, title)
+        self._can_go_back = can_go_back
+        self._last_collections = last_collections
+        self.screen.refresh_bindings()
 
     def action_back(self) -> None:
         if self._can_go_back and self._last_collections is not None:
@@ -1426,6 +1449,14 @@ class YtmTui(App[None]):
             return
         query, kind = result
         self.search_filter = kind
+        if self.view_title and not self._in_search_view():
+            self._pre_search = (
+                self.view_tracks,
+                self.view_collections,
+                self.view_title,
+                self._can_go_back,
+                self._last_collections,
+            )
         self.query_one("#tracks-title", Static).update(
             f"Search: {query}  [dim]searching…[/dim]"
         )
