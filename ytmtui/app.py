@@ -18,6 +18,7 @@
 """The Textual UI."""
 from __future__ import annotations
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -39,7 +40,7 @@ from textual.widgets import (
     Static,
 )
 from textual.worker import Worker, get_current_worker
-from textual_image.widget import Image
+from textual_image.widget import HalfcellImage, Image
 
 from . import art, config, cookies, local, lyrics, themes
 from .disc import Disc, Visualizer
@@ -365,6 +366,8 @@ class HelpScreen(ModalScreen[None]):
   [cyan]/[/cyan]             search YouTube Music
   [cyan]backspace[/cyan]     back to the search results (also [cyan]b[/cyan]);
                  after opening an album/artist/playlist
+  [cyan]esc[/cyan]           close search results, back to the
+                 playlist you had open before
   [cyan]A[/cyan]             add highlighted track to a playlist,
                  or create a new one
   [cyan]d[/cyan]             download highlighted track
@@ -515,6 +518,7 @@ class YtmTui(App[None]):
         ("Q", "queue", "Queue"),
         ("z", "sleep", "Sleep"),
         ("backspace,b", "back", "Back"),
+        ("escape", "close_search", "Close search"),
         ("d", "download", "Download"),
         ("A", "add_to_playlist", "+Playlist"),
         ("l", "lyrics", "Lyrics"),
@@ -528,7 +532,9 @@ class YtmTui(App[None]):
         super().__init__()
         self.settings = config.load_settings()
         self.library: Library | None = None
-        self.player = MpvPlayer(on_eof=self._on_eof)
+        self.player = MpvPlayer(on_eof=self._on_eof, on_error=self._on_play_error)
+        self._play_lock = threading.Lock()
+        self._retry_id: str | None = None
         cookie_browser, cookie_file = cookies.resolve_source(self.settings)
         self.resolver = Resolver(
             self.settings.get("format"),
@@ -553,6 +559,9 @@ class YtmTui(App[None]):
         # were opened from them (so Backspace can return).
         self._last_collections: tuple[str, list[Collection]] | None = None
         self._can_go_back = False
+        # Sidebar index that was open before a search replaced the table, so
+        # Esc can return to it. None when not showing search results.
+        self._search_return: int | None = None
         known = {key for key, _ in SEARCH_FILTERS}
         self.search_filter = self.settings.get("search_filter")
         if self.search_filter not in known:
@@ -594,6 +603,9 @@ class YtmTui(App[None]):
                 yield DataTable(id="tracks", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="now"):
             yield Image(id="art")
+            # Terminal graphics (sixel/kitty) are wiped when a modal dims the
+            # screen, so a colour half-cell copy stands in while one is open.
+            yield HalfcellImage(id="art-dim")
             with Vertical(id="np"):
                 yield Static("Nothing playing", id="np-title")
                 yield Static("", id="np-artist")
@@ -638,6 +650,7 @@ class YtmTui(App[None]):
 
         self._apply_sidebar_width()
         self.set_interval(0.25, self._tick)
+        self.set_interval(0.1, self._sync_art_cover)
         # Local/Downloads don't need the network, so they show up immediately
         # rather than waiting on the library connection below.
         self._fill_playlists([])
@@ -696,6 +709,7 @@ class YtmTui(App[None]):
             self._sidebar_kinds.append(("playlist", playlist))
         if playlists:
             view.index = 2  # first real playlist, past Local/Downloads
+            self._search_return = None
             self._open_playlist(playlists[0])
         elif not had_selection:
             view.index = 0
@@ -809,7 +823,17 @@ class YtmTui(App[None]):
         # Only offer "Back" when there is somewhere to go back to.
         if action == "back":
             return self._can_go_back
+        if action == "close_search":
+            return self._search_return is not None
         return True
+
+    def action_close_search(self) -> None:
+        """Leave search results and reopen the view that was open before."""
+        index = self._search_return
+        self._search_return = None
+        self.screen.refresh_bindings()
+        if index is not None:
+            self._open_sidebar_index(index)
 
     def action_back(self) -> None:
         if self._can_go_back and self._last_collections is not None:
@@ -862,7 +886,7 @@ class YtmTui(App[None]):
                 duration,
             )
         self.playing_row = self._current_view_row()
-        self._mark_playing_row()
+        self._mark_playing_row(full=True)
         if rows:
             table.move_cursor(row=max(0, min(keep, len(rows) - 1)))
 
@@ -885,6 +909,11 @@ class YtmTui(App[None]):
     # -- events ------------------------------------------------------------
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         index = self.query_one("#playlists", ListView).index
+        self._search_return = None
+        self._open_sidebar_index(index)
+        self.query_one("#tracks", DataTable).focus()
+
+    def _open_sidebar_index(self, index: int | None) -> None:
         if index is None or not (0 <= index < len(self._sidebar_kinds)):
             return
         kind, payload = self._sidebar_kinds[index]
@@ -894,7 +923,6 @@ class YtmTui(App[None]):
             self._open_downloads()
         elif payload is not None:
             self._open_playlist(payload)
-        self.query_one("#tracks", DataTable).focus()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "tracks":
@@ -938,10 +966,12 @@ class YtmTui(App[None]):
         self._failures_in_a_row = 0  # a deliberate choice deserves a fresh run
         self._start_current()
 
-    def _start_current(self, start: float = 0.0) -> None:
+    def _start_current(self, start: float = 0.0, retry: bool = False) -> None:
         track = self.queue.current()
         if track is None:
             return
+        if not retry:
+            self._retry_id = None
         self._resume_pos = None  # playback is starting; nothing left to resume
         # The old track's position must not be saved against the new one.
         self.player.time_pos = start
@@ -954,8 +984,12 @@ class YtmTui(App[None]):
 
     @work(thread=True, group="play", exclusive=True)
     def _play_local(self, track: Track, start: float = 0.0) -> None:
+        worker = get_current_worker()
         try:
-            self.player.play_url(track.local_path, start=start)
+            with self._play_lock:
+                if worker.is_cancelled:
+                    return
+                self.player.play_url(track.local_path, start=start)
         except Exception as exc:
             self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
             return
@@ -968,10 +1002,12 @@ class YtmTui(App[None]):
     def _resolve_and_play(self, track: Track, start: float = 0.0) -> None:
         worker = get_current_worker()
         try:
-            url, headers = self.resolver.resolve(track.video_id)
+            url, headers = self.resolver.resolve_within(track.video_id)
         except TrackBlocked as exc:
             # This upload is barred, but the song itself may exist elsewhere.
             swap = self._resolve_alternate(track, worker)
+            if worker.is_cancelled:
+                return  # the user has moved on; a late failure must not skip again
             if swap is None:
                 self.call_from_thread(
                     self.notify, f'Cannot play "{track.title}": {exc}', severity="error"
@@ -987,16 +1023,21 @@ class YtmTui(App[None]):
                 timeout=8,
             )
         except Exception as exc:
+            if worker.is_cancelled:
+                return
             self.call_from_thread(
                 self.notify, f'Cannot play "{track.title}": {exc}', severity="error"
             )
             self.call_from_thread(self._skip_after_failure)
             return
-        if worker.is_cancelled:
-            return
         self._failures_in_a_row = 0
         try:
-            self.player.play_url(url, headers, start=start)
+            # Check and load under one lock, so a stale worker cannot interleave
+            # its header/loadfile commands with the newer track's.
+            with self._play_lock:
+                if worker.is_cancelled:
+                    return
+                self.player.play_url(url, headers, start=start)
         except Exception as exc:
             self.call_from_thread(self.notify, f"mpv: {exc}", severity="error")
             return
@@ -1018,7 +1059,7 @@ class YtmTui(App[None]):
         known = self._alternates.get(track.video_id)
         if known is not None:
             try:
-                url, headers = self.resolver.resolve(known.video_id)
+                url, headers = self.resolver.resolve_within(known.video_id)
             except Exception:
                 self._alternates.pop(track.video_id, None)  # it died too
             else:
@@ -1035,8 +1076,11 @@ class YtmTui(App[None]):
 
         # Resolve them at once rather than one after another: a blocked upload
         # costs a couple of seconds to find out about, and we may try several.
-        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
-            futures = {c.video_id: pool.submit(self.resolver.resolve, c.video_id)
+        # No `with`: its exit waits for every slow straggler even after we have
+        # a winner (or the user has skipped on), which is dead time.
+        pool = ThreadPoolExecutor(max_workers=len(candidates))
+        try:
+            futures = {c.video_id: pool.submit(self.resolver.resolve_within, c.video_id)
                        for c in candidates}
             for candidate in candidates:  # keep best-match order, not finish order
                 if worker.is_cancelled:
@@ -1047,6 +1091,8 @@ class YtmTui(App[None]):
                     continue  # blocked or dead as well; try the next one
                 self._alternates[track.video_id] = candidate
                 return candidate, url, headers
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return None
 
     # Give up once we have failed our way through the whole queue, but never
@@ -1133,7 +1179,22 @@ class YtmTui(App[None]):
 
     def _apply_art(self, path: str) -> None:
         try:
-            self.query_one("#art", Image).image = path
+            base = self.screen_stack[0]  # modals may be on top
+            base.query_one("#art", Image).image = path
+            base.query_one("#art-dim", HalfcellImage).image = path
+        except Exception:
+            pass
+
+    def _sync_art_cover(self) -> None:
+        """Swap to the half-cell cover while a modal window is open."""
+        covered = len(self.screen_stack) > 1
+        if covered == getattr(self, "_art_covered", False):
+            return
+        self._art_covered = covered
+        try:
+            base = self.screen_stack[0]
+            base.query_one("#art", Image).display = not covered
+            base.query_one("#art-dim", HalfcellImage).display = covered
         except Exception:
             pass
 
@@ -1171,14 +1232,24 @@ class YtmTui(App[None]):
         if 0 <= self.playing_row < table.row_count:
             table.move_cursor(row=self.playing_row)
 
-    def _mark_playing_row(self) -> None:
+    def _mark_playing_row(self, full: bool = False) -> None:
+        """Move the ▶ marker. Only a freshly rebuilt table needs `full`; touching
+        every row of a big library on each track change stalls the UI."""
         table = self.query_one("#tracks", DataTable)
-        for row in range(table.row_count):
+        previous = getattr(self, "_marked_row", None)
+        if full:
+            rows = range(table.row_count)
+        else:
+            rows = {r for r in (previous, self.playing_row) if r is not None}
+        for row in rows:
+            if not 0 <= row < table.row_count:
+                continue
             marker = "▶" if row == self.playing_row else ""
             try:
                 table.update_cell_at(Coordinate(row, 0), marker)
             except Exception:
                 break
+        self._marked_row = self.playing_row
 
     def _on_eof(self) -> None:
         """Called from mpv's reader thread when a track ends by itself."""
@@ -1186,6 +1257,29 @@ class YtmTui(App[None]):
             self.call_from_thread(self._advance_auto)
         except Exception:
             pass
+
+    def _on_play_error(self, reason: str) -> None:
+        """mpv could not open the stream (called off the reader thread)."""
+        try:
+            self.call_from_thread(self._handle_play_error, reason)
+        except Exception:
+            pass
+
+    def _handle_play_error(self, reason: str) -> None:
+        track = self.queue.current()
+        if track is None:
+            return
+        # Most often a cached URL that expired or was refused. Re-resolve once
+        # from scratch before giving up on the track.
+        if not track.local_path and self._retry_id != track.video_id:
+            self._retry_id = track.video_id
+            self.resolver.invalidate(track.video_id)
+            self.notify(f'Retrying "{track.title}"…', timeout=3)
+            self._start_current(retry=True)
+            return
+        self._retry_id = None
+        self.notify(f'Cannot play "{track.title}": {reason}', severity="error")
+        self._skip_after_failure()
 
     def _advance_auto(self) -> None:
         if self._sleep_after_track:
@@ -1426,6 +1520,9 @@ class YtmTui(App[None]):
             return
         query, kind = result
         self.search_filter = kind
+        if self._search_return is None:
+            self._search_return = self.query_one("#playlists", ListView).index
+            self.screen.refresh_bindings()
         self.query_one("#tracks-title", Static).update(
             f"Search: {query}  [dim]searching…[/dim]"
         )

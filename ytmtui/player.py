@@ -63,8 +63,13 @@ def _band_graph(paths: list[str]) -> str:
 class MpvPlayer:
     """Blocking-but-thread-safe controller for one mpv instance."""
 
-    def __init__(self, on_eof: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        on_eof: Callable[[], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> None:
         self.on_eof = on_eof
+        self.on_error = on_error
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._path = os.path.join(
@@ -325,10 +330,26 @@ class MpvPlayer:
         elif event == "end-file":
             # "stop" fires when we replace the file ourselves; only real
             # end-of-stream should advance the queue.
-            if msg.get("reason") == "eof":
+            reason = msg.get("reason")
+            if reason == "eof":
+                # While a new file is still loading, an EOF can only belong to
+                # the one we just replaced; acting on it would skip a track.
+                if self.loading:
+                    return
                 self.time_pos = 0.0
-                if self.on_eof is not None:
-                    self.on_eof()
+                self._fire(self.on_eof)
+            elif reason == "error":
+                # A dead or expired stream URL. Without this, mpv just goes
+                # idle and playback silently never starts.
+                self.loading = False
+                self.time_pos = 0.0
+                self._fire(self.on_error, str(msg.get("file_error") or "playback failed"))
+
+    def _fire(self, callback: Callable[..., None] | None, *args: Any) -> None:
+        """Run a callback off the reader thread, which must keep draining the
+        socket: if it blocks waiting on the UI, mpv blocks writing to us."""
+        if callback is not None:
+            threading.Thread(target=callback, args=args, daemon=True).start()
 
     # -- transport ---------------------------------------------------------
     def play_url(
@@ -350,6 +371,7 @@ class MpvPlayer:
 
     def stop(self) -> None:
         self._send(["stop"], wait=False)
+        self.loading = False
         self.time_pos = 0.0
         self.duration = 0.0
         self.paused = True

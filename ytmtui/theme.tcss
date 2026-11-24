@@ -91,10 +91,14 @@ Screen {
     padding: 0 1;
 }
 
-#art {
+#art, #art-dim {
     width: 16;
     height: 8;
     margin-right: 2;
+}
+
+#art-dim {
+    display: none;
 }
 
 #np {

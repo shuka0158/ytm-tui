@@ -223,7 +223,7 @@ class Resolver:
         self._cache: dict[str, tuple[str, dict[str, str], float]] = {}
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="resolve")
-        self._inflight: set[str] = set()
+        self._inflight: dict[str, threading.Event] = {}
         # Finding out a track is blocked costs two round trips, and the answer
         # does not change within a session. Remember it.
         self._blocked: dict[str, str] = {}
@@ -313,12 +313,51 @@ class Resolver:
                 headers = requested[0].get("http_headers") or headers
         return url, headers
 
+    def invalidate(self, video_id: str) -> None:
+        """Forget a cached stream URL, e.g. after mpv failed to open it."""
+        with self._lock:
+            self._cache.pop(video_id, None)
+
+    def resolve_within(self, video_id: str, timeout: float = 45.0) -> tuple[str, dict[str, str]]:
+        """resolve() with a deadline, so a hung yt-dlp or JS runtime cannot
+        leave playback waiting forever."""
+        box: dict[str, object] = {}
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                box["ok"] = self.resolve(video_id)
+            except BaseException as exc:  # handed back to the caller below
+                box["err"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=run, daemon=True, name="resolve-now").start()
+        if not done.wait(timeout):
+            raise ResolveError(f"timed out after {timeout:.0f}s resolving the stream")
+        if "err" in box:
+            raise box["err"]  # type: ignore[misc]
+        return box["ok"]  # type: ignore[return-value]
+
     def resolve(self, video_id: str) -> tuple[str, dict[str, str]]:
         """Blocking. Returns (stream_url, http_headers)."""
         hit = self._lookup(video_id)
         if hit is not None:
             return hit
 
+        # A prefetch of this very track may be mid-flight; wait for it rather
+        # than running a second extraction in parallel on the shared yt-dlp.
+        with self._lock:
+            pending = self._inflight.get(video_id)
+        if pending is not None:
+            pending.wait(60)
+            hit = self._lookup(video_id)
+            if hit is not None:
+                return hit
+
+        return self._resolve_now(video_id)
+
+    def _resolve_now(self, video_id: str) -> tuple[str, dict[str, str]]:
         with self._lock:
             blocked = self._blocked.get(video_id)
         if blocked is not None:
@@ -517,16 +556,18 @@ class Resolver:
         with self._lock:
             if video_id in self._inflight:
                 return
-            self._inflight.add(video_id)
+            finished = threading.Event()
+            self._inflight[video_id] = finished
 
         def run() -> None:
             try:
-                self.resolve(video_id)
+                self._resolve_now(video_id)
             except Exception:
                 pass
             finally:
                 with self._lock:
-                    self._inflight.discard(video_id)
+                    self._inflight.pop(video_id, None)
+                finished.set()
 
         self._pool.submit(run)
 
