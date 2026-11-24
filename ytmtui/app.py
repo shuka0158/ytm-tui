@@ -40,9 +40,9 @@ from textual.widgets import (
     Static,
 )
 from textual.worker import Worker, get_current_worker
-from textual_image.widget import HalfcellImage, Image
+from textual_image.widget import Image
 
-from . import art, config, cookies, local, lyrics, themes
+from . import art, config, cookies, local, lyrics, themes, tgp_fix
 from .disc import Disc, Visualizer
 from .api import AuthMissing, Library
 from .models import Collection, Playlist, Track, fmt_duration
@@ -80,6 +80,9 @@ SLEEP_CHOICES = (
 )
 SLEEP_FADE_SECONDS = 15
 SESSION_SAVE_EVERY = 20.0
+
+
+tgp_fix.apply()
 
 
 class SearchScreen(ModalScreen["tuple[str, str] | None"]):
@@ -603,9 +606,6 @@ class YtmTui(App[None]):
                 yield DataTable(id="tracks", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="now"):
             yield Image(id="art")
-            # Terminal graphics (sixel/kitty) are wiped when a modal dims the
-            # screen, so a colour half-cell copy stands in while one is open.
-            yield HalfcellImage(id="art-dim")
             with Vertical(id="np"):
                 yield Static("Nothing playing", id="np-title")
                 yield Static("", id="np-artist")
@@ -650,7 +650,6 @@ class YtmTui(App[None]):
 
         self._apply_sidebar_width()
         self.set_interval(0.25, self._tick)
-        self.set_interval(0.1, self._sync_art_cover)
         # Local/Downloads don't need the network, so they show up immediately
         # rather than waiting on the library connection below.
         self._fill_playlists([])
@@ -1179,22 +1178,7 @@ class YtmTui(App[None]):
 
     def _apply_art(self, path: str) -> None:
         try:
-            base = self.screen_stack[0]  # modals may be on top
-            base.query_one("#art", Image).image = path
-            base.query_one("#art-dim", HalfcellImage).image = path
-        except Exception:
-            pass
-
-    def _sync_art_cover(self) -> None:
-        """Swap to the half-cell cover while a modal window is open."""
-        covered = len(self.screen_stack) > 1
-        if covered == getattr(self, "_art_covered", False):
-            return
-        self._art_covered = covered
-        try:
-            base = self.screen_stack[0]
-            base.query_one("#art", Image).display = not covered
-            base.query_one("#art-dim", HalfcellImage).display = covered
+            self.screen_stack[0].query_one("#art", Image).image = path
         except Exception:
             pass
 
