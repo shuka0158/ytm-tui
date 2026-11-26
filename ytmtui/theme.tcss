@@ -8,6 +8,7 @@ Screen {
 
 #main {
     height: 1fr;
+    border-bottom: hkey $primary-darken-2;
 }
 
 .pane-title {
@@ -85,22 +86,20 @@ Screen {
 }
 
 #now {
-    height: 9;
+    height: 7;
     background: $panel;
-    border-top: solid $primary-darken-2;
     padding: 0 1;
 }
 
 #art {
-    width: 16;
-    height: 8;
+    width: 14;
+    height: 7;
     margin-right: 2;
 }
 
 #np {
     width: 1fr;
-    height: 8;
-    padding-top: 1;
+    height: 7;
 }
 
 #disc {
@@ -112,7 +111,7 @@ Screen {
 
 #viz {
     width: 30;
-    height: 8;
+    height: 7;
     content-align: center bottom;
     dock: right;
 }
