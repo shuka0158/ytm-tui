@@ -167,6 +167,32 @@ def _extract_lyrics(page_html: str) -> str | None:
     return text or None
 
 
+def _find_lrclib(artist: str, title: str) -> tuple[str, str] | None:
+    """Plain lyrics and credit line from LRCLIB (free, no key), or None."""
+    clean_title = _clean_query(title) or title
+    first = artist.split(",")[0].split("&")[0].strip()
+    try:
+        response = requests.get(
+            "https://lrclib.net/api/search",
+            params={"track_name": clean_title, "artist_name": first},
+            headers={"User-Agent": "ytm-tui"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        hits = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+    hits = [h for h in hits if isinstance(h, dict) and (h.get("plainLyrics") or "").strip()]
+    if not hits:
+        return None
+    low = first.lower()
+    best = next(
+        (h for h in hits if low and low in (h.get("artistName") or "").lower()), hits[0]
+    )
+    display = f"{best.get('artistName', artist)} - {best.get('trackName', title)}"
+    return best["plainLyrics"].strip(), display
+
+
 def fetch(artist: str, title: str) -> tuple[str, str]:
     """Lyrics text and the matched "Artist - Title" credit line.
 
@@ -182,6 +208,16 @@ def fetch(artist: str, title: str) -> tuple[str, str]:
                 return body, heading[2:]
         except OSError:
             pass
+
+    lrc = _find_lrclib(artist, title)
+    if lrc is not None:
+        text, display = lrc
+        with _lock:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_file.with_suffix(".part")
+            tmp.write_text(f"# {display}\n\n{text}", encoding="utf-8")
+            tmp.replace(cache_file)
+        return text, display
 
     found = _find_song_url(artist, title)
     if found is None:
