@@ -149,7 +149,11 @@ class Library:
         out: list[Playlist] = []
         seen: set[str] = set()
         for section in home or []:
+            if not isinstance(section, dict):
+                continue
             for item in section.get("contents") or []:
+                if not isinstance(item, dict):
+                    continue
                 pid = item.get("playlistId") or ""
                 if not pid.startswith(_MIX_ID_PREFIX) or pid in seen:
                     continue
