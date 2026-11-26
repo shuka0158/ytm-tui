@@ -127,7 +127,7 @@ class Visualizer(Static):
     frequency bands and reports each band's level (see player._band_graph).
     Falls back to a simulated spectrum only if mpv can't run that analysis."""
 
-    BARS = 12
+    BARS = 30
     LEVELS = " ▁▂▃▄▅▆▇█"
     FLOOR_DB, CEIL_DB = -60.0, 0.0
     STALE = 0.25  # seconds without new levels = silence (paused, stopped)
@@ -151,7 +151,7 @@ class Visualizer(Static):
                 return [0.0] * self.BARS
             out = []
             for i, db in enumerate(player.levels[: self.BARS]):
-                db += i * 0.6  # highs carry less energy; even the bars out
+                db += i * 0.8  # highs carry less energy; even the bars out
                 x = max(0.0, min(1.0, (db - self.FLOOR_DB) / (self.CEIL_DB - self.FLOOR_DB)))
                 out.append(x ** 1.6)  # curve keeps loud songs from pinning the bars
             return out
@@ -180,15 +180,16 @@ class Visualizer(Static):
     def _draw(self) -> None:
         accent = _accent(self)
         rows = 5
+        levels = len(self.LEVELS) - 1
         text = Text(no_wrap=True)
-        for row in range(rows):  # row 0 is the top
-            base = (rows - 1 - row) * 8
-            colour = _mix(accent, (255, 255, 255), 0.65 * (1 - row / (rows - 1)) ** 1.5)
+        for row in range(rows):
+            base = (rows - 1 - row) * levels
+            t = 0.3 * (1 - row / max(1, rows - 1)) if rows > 1 else 0.2
+            colour = _mix(_mix(accent, (0, 0, 0), 0.25), (255, 255, 255), t)
             style = Style(color=Color.from_rgb(*colour))
             for h in self._h:
-                level = int(max(0, min(8, h * rows * 8 - base)))
+                level = int(max(0, min(levels, h * rows * levels - base)))
                 text.append(self.LEVELS[level], style=style)
-                text.append(" ")
             if row < rows - 1:
                 text.append("\n")
         self.update(text)

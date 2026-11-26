@@ -40,7 +40,7 @@ class MpvError(RuntimeError):
 
 
 # Centre frequencies (Hz) of the visualizer bands, roughly log-spaced.
-BANDS = (60, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000)
+BANDS = tuple(int(40 * (400 ** (i / 29))) for i in range(30))
 _RMS_KEY = "lavfi.astats.Overall.RMS_level"
 
 
@@ -53,7 +53,7 @@ def _band_graph(paths: list[str]) -> str:
     parts = [f"[aid1]asplit={n + 1}[ao]{outs}"]
     for i, (hz, path) in enumerate(zip(BANDS, paths)):
         parts.append(
-            f"[b{i}]bandpass=f={hz}:width_type=o:w=1,asetnsamples=n=1024,"
+            f"[b{i}]bandpass=f={hz}:width_type=o:w=0.6,asetnsamples=n=1024,"
             f"astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level,"
             f"ametadata=print:key={_RMS_KEY}:file={path}:direct=1,anullsink"
         )

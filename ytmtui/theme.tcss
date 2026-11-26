@@ -111,7 +111,7 @@ Screen {
 }
 
 #viz {
-    width: 24;
+    width: 30;
     height: 8;
     content-align: center bottom;
     dock: right;
